@@ -59,15 +59,19 @@ export class Texture {
     _buildUVTable(texWidth, texHeight, cols, rows) {
         const panelW = texWidth / cols;
         const panelH = texHeight / rows;
+        // Half-texel inset keeps UVs off cell boundaries, preventing the
+        // sampler from bleeding into adjacent cells due to floating point error.
+        const insetU = 0.5 / texWidth;
+        const insetV = 0.5 / texHeight;
         const table = [];
 
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 table.push({
-                    u0: (col * panelW) / texWidth,
-                    v0: (row * panelH) / texHeight,
-                    u1: ((col + 1) * panelW) / texWidth,
-                    v1: ((row + 1) * panelH) / texHeight,
+                    u0: (col * panelW) / texWidth + insetU,
+                    v0: (row * panelH) / texHeight + insetV,
+                    u1: ((col + 1) * panelW) / texWidth - insetU,
+                    v1: ((row + 1) * panelH) / texHeight - insetV,
                 });
             }
         }

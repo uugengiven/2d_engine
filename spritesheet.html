@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spritesheet Demo</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { image-rendering: pixelated; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="width: 640px; height: 480px;"></canvas>
+
+    <script type="module">
+        import { Engine }  from './engine/engine.js';
+        import { Texture } from './engine/texture.js';
+        import { Sprite }  from './engine/sprite.js';
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 320, 240);
+
+            const img = await loadImage('spritesheet.png');
+            // 8 columns, 17 rows, each cell is 32x32
+            const texture = await Texture.create(engine.device, img, { cols: 8, rows: 17 });
+
+            const sprite = new Sprite(texture, {
+                x: 144,
+                y: 104,
+                width: 32,
+                height: 32,
+                panelIndex: 0,
+            });
+
+            const FRAME_COUNT = 15;
+            const FRAME_MS = 150;
+            let frame = 0;
+            let lastTime = performance.now();
+
+            function draw() {
+                engine.backbuffer.clear(30, 30, 30);
+                engine.backbuffer.draw(sprite);
+                engine.buffer_flip();
+            }
+
+            function tick(now) {
+                if (now - lastTime >= FRAME_MS) {
+                    frame = (frame + 1) % FRAME_COUNT;
+                    sprite.panelIndex = frame * 8;
+                    lastTime = now;
+                    draw();
+                }
+                requestAnimationFrame(tick);
+            }
+
+            draw();
+            requestAnimationFrame(tick);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>
