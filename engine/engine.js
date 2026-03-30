@@ -193,8 +193,8 @@ export class Engine {
             if (cmd.type !== 'draw') continue;
 
             const { sprite } = cmd;
-            const { x, y, width, height, texture: tex, panelIndex } = sprite;
-            const { u0, v0, u1, v1 } = tex.getUVs(panelIndex);
+            const { x, y, width, height, texture: tex, frameIndex } = sprite;
+            const { u0, v0, u1, v1 } = tex.getUVs(frameIndex);
 
             // Two triangles (CCW winding) forming a quad
             const verts = new Float32Array([

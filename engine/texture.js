@@ -43,11 +43,11 @@ export class Texture {
     }
 
     /**
-     * @param {number} panelIndex
+     * @param {number} frameIndex
      * @returns {{ u0: number, v0: number, u1: number, v1: number }}
      */
-    getUVs(panelIndex) {
-        return this.uvTable[panelIndex] ?? this.uvTable[0];
+    getUVs(frameIndex) {
+        return this.uvTable[frameIndex] ?? this.uvTable[0];
     }
 
     /**

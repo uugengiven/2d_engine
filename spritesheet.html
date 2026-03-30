@@ -39,7 +39,7 @@
                 y: 104,
                 width: 32,
                 height: 32,
-                panelIndex: 0,
+                frameIndex: 0,
             });
 
             const FRAME_COUNT = 15;
@@ -56,7 +56,7 @@
             function tick(now) {
                 if (now - lastTime >= FRAME_MS) {
                     frame = (frame + 1) % FRAME_COUNT;
-                    sprite.panelIndex = frame * 8;
+                    sprite.frameIndex = frame * 8;
                     lastTime = now;
                     draw();
                 }
