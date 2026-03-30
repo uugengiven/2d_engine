@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU 2D Engine Demo</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { image-rendering: pixelated; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="height: 480px; width: 640px;"></canvas>
+
+    <script type="module">
+        import { Engine }     from './engine/engine.js';
+        import { Texture }    from './engine/texture.js';
+        import { Sprite }     from './engine/sprite.js';
+
+        let sprite;
+        let engine;
+
+        // Load an image the browser's way — not engine code
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            engine = await Engine.init(canvas, 320, 240);
+
+            const img = await loadImage('sprite.png');
+            const texture = await Texture.create(engine.device, img);
+
+            sprite = new Sprite(texture, {
+                x: 100,
+                y: 80,
+                width: 64,
+                height: 64,
+            });
+
+            engine.backbuffer.clear(26, 26, 46);
+            engine.backbuffer.draw(sprite);
+            engine.buffer_flip();
+        }
+
+        function onKeyDown(event) {
+            if (event.key === 'a') {
+                sprite.x -= 5;
+                engine.backbuffer.clear(26, 26, 46);
+                engine.backbuffer.draw(sprite);
+                engine.buffer_flip();
+            }
+            if (event.key === 'd') {
+                sprite.x += 5;
+                engine.backbuffer.clear(26, 26, 46);
+                engine.backbuffer.draw(sprite);
+                engine.buffer_flip();
+            }
+        }
+
+        window.addEventListener('keydown', onKeyDown);
+        main().catch(console.error);
+    </script>
+</body>
+</html>

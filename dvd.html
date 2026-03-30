@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU 2D Engine Demo</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { image-rendering: pixelated; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="height: 480px; width: 640px;"></canvas>
+
+    <script type="module">
+        import { Engine }     from './engine/engine.js';
+        import { Texture }    from './engine/texture.js';
+        import { Sprite }     from './engine/sprite.js';
+
+        let sprite;
+        let engine;
+
+        // Load an image the browser's way — not engine code
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            engine = await Engine.init(canvas, 320, 240);
+
+            const img = await loadImage('dvd_logo.png');
+            const texture = await Texture.create(engine.device, img);
+
+            sprite = new Sprite(texture, {
+                x: 100,
+                y: 80,
+                width: 150,
+                height: 67,
+            });
+            sprite.vx = 1;
+            sprite.vy = 1;
+
+            
+            requestAnimationFrame(loop);
+        }
+
+        let lastTime = 0;
+
+        function loop(timestamp) {
+            const delta = timestamp  - lastTime;
+            lastTime = timestamp;
+
+            if (delta < 100) {
+                sprite.x += sprite.vx;
+                sprite.y += sprite.vy;
+                if (sprite.x < 0 || sprite.x + sprite.width > engine.width) {
+                    sprite.vx *= -1;
+                    sprite.x += sprite.vx;
+                }
+                if (sprite.y < 0 || sprite.y + sprite.height > engine.height) {
+                    sprite.vy *= -1;
+                    sprite.y += sprite.vy;
+                }
+            }
+            engine.backbuffer.clear(26, 150, 200);
+            engine.backbuffer.draw(sprite);
+            //console.log(sprite);
+            engine.buffer_flip();
+
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>
