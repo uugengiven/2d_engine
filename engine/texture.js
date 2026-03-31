@@ -5,15 +5,18 @@ export class Texture {
     view;
     /** @type {GPUSampler} */
     sampler;
+    /** @type {GPUTextureView | null} Normal map view, or null if none was provided */
+    normalView;
     /** @type {Array<{u0:number, v0:number, u1:number, v1:number}>} */
     uvTable;
 
     /**
      * @param {GPUDevice} device
      * @param {ImageBitmap} bitmap
+     * @param {ImageBitmap | null} normalBitmap
      * @param {{ cols?: number, rows?: number }} options
      */
-    constructor(device, bitmap, options = {}) {
+    constructor(device, bitmap, normalBitmap, options = {}) {
         const cols = options.cols ?? 1;
         const rows = options.rows ?? 1;
 
@@ -39,6 +42,25 @@ export class Texture {
             minFilter: 'nearest',
         });
 
+        if (normalBitmap) {
+            const normalTex = device.createTexture({
+                size: [normalBitmap.width, normalBitmap.height],
+                format: 'rgba8unorm',
+                usage:
+                    GPUTextureUsage.TEXTURE_BINDING |
+                    GPUTextureUsage.COPY_DST |
+                    GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            device.queue.copyExternalImageToTexture(
+                { source: normalBitmap },
+                { texture: normalTex },
+                [normalBitmap.width, normalBitmap.height],
+            );
+            this.normalView = normalTex.createView();
+        } else {
+            this.normalView = null;
+        }
+
         this.uvTable = this._buildUVTable(bitmap.width, bitmap.height, cols, rows);
     }
 
@@ -50,12 +72,6 @@ export class Texture {
         return this.uvTable[frameIndex] ?? this.uvTable[0];
     }
 
-    /**
-     * @param {number} texWidth
-     * @param {number} texHeight
-     * @param {number} cols
-     * @param {number} rows
-     */
     _buildUVTable(texWidth, texHeight, cols, rows) {
         const panelW = texWidth / cols;
         const panelH = texHeight / rows;
@@ -81,15 +97,26 @@ export class Texture {
 
     /**
      * Creates a Texture from any image source the browser can decode.
+     * The normal map is fully optional — omitting it or not passing options.normalMap
+     * means the engine's shared flat-normal fallback is used automatically.
+     *
      * @param {GPUDevice} device
      * @param {HTMLImageElement | HTMLCanvasElement | OffscreenCanvas | ImageBitmap} source
-     * @param {{ cols?: number, rows?: number }} options
+     * @param {{ cols?: number, rows?: number, normalMap?: HTMLImageElement | HTMLCanvasElement | OffscreenCanvas | ImageBitmap }} [options]
      * @returns {Promise<Texture>}
      */
     static async create(device, source, options = {}) {
         const bitmap = source instanceof ImageBitmap
             ? source
             : await createImageBitmap(source);
-        return new Texture(device, bitmap, options);
+
+        let normalBitmap = null;
+        if (options.normalMap) {
+            normalBitmap = options.normalMap instanceof ImageBitmap
+                ? options.normalMap
+                : await createImageBitmap(options.normalMap);
+        }
+
+        return new Texture(device, bitmap, normalBitmap, options);
     }
 }

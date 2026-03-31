@@ -21,6 +21,16 @@ export class BackBuffer {
     }
 
     /**
+     * Starts a new layer. All draw() calls after this belong to this layer
+     * until the next layer() call or buffer_flip(). Draws before the first
+     * layer() call are placed in an implicit unlit layer.
+     * @param {Array<object>} lights  Array of Light objects from Light.ambient/point/directional
+     */
+    layer(lights = []) {
+        this.commands.push({ type: 'layer', lights });
+    }
+
+    /**
      * Records a sprite draw for this frame.
      * No GPU work happens here.
      * @param {import('./sprite.js').Sprite} sprite
