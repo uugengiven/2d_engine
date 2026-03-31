@@ -33,6 +33,7 @@
             const img = await loadImage('white.png');
             const normal = await loadImage('labyrinth_normal.png');
             const texture = await Texture.create(engine.device, img, { normalMap: normal });
+            // const texture = await Texture.create(engine.device, img);
 
             // Fill the screen with tiles so we can see the light fall off across them
             const tileSize = 32;
@@ -51,7 +52,7 @@
                 120,
                 2.0,
                 50,
-                12
+                8
             );
             const pointLight2 = Light.point(
                 { x: 80, y: 60 },
@@ -60,7 +61,7 @@
                 120,
                 2.0,
                 50,
-                0
+                4
             );
 
             const ambient = Light.ambient({ r: 30, g: 30, b: 50 }, 1.0);
