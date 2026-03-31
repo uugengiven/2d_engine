@@ -73,6 +73,12 @@ export class Engine {
         const context = canvas.getContext('webgpu');
         const format = navigator.gpu.getPreferredCanvasFormat();
 
+        // Sync the canvas pixel buffer to its CSS display size so WebGPU renders
+        // at the right resolution and the scaler does a single clean integer upscale.
+        // Falls back to the internal resolution if no CSS size is set.
+        canvas.width  = canvas.clientWidth  || width;
+        canvas.height = canvas.clientHeight || height;
+
         context.configure({ device, format, alphaMode: 'opaque' });
 
         const engine = new Engine();
