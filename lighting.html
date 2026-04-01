@@ -31,10 +31,24 @@
             const engine = await Engine.init(canvas, 160, 120);
 
             const img = await loadImage('white.png');
-            const normal = await loadImage('labyrinth_normal.png');
-            const texture = await Texture.create(engine.device, img, { normalMap: normal });
-            // const texture = await Texture.create(engine.device, img);
+            // const normal = await loadImage('labyrinth_normal.png');
+            // const texture = await Texture.create(engine.device, img, { normalMap: normal });
+            const texture = await Texture.create(engine.device, img);
 
+            const rock_img = await loadImage('white_ball.png');
+            const rock_normal = await loadImage('ball_normal.png');
+            const rock_texture = await Texture.create(engine.device, rock_img, { normalMap: rock_normal });
+
+
+            const rocks = [];
+                for (let i = 0; i < 20; i++) {
+                    rocks.push(new Sprite(rock_texture, {
+                        x: Math.random() * engine.width,
+                        y: Math.random() * engine.height,
+                        width: 16,
+                        height: 16,
+                    }));
+                }
             // Fill the screen with tiles so we can see the light fall off across them
             const tileSize = 32;
             const tiles = [];
@@ -52,7 +66,7 @@
                 120,
                 2.0,
                 50,
-                8
+                6
             );
             const pointLight2 = Light.point(
                 { x: 80, y: 60 },
@@ -61,7 +75,7 @@
                 120,
                 2.0,
                 50,
-                4
+                6
             );
 
             const ambient = Light.ambient({ r: 30, g: 30, b: 50 }, 1.0);
@@ -78,6 +92,7 @@
                 engine.backbuffer.clear(0, 0, 0);
                 engine.backbuffer.layer([ambient, pointLight, pointLight2]);
                 for (const tile of tiles) engine.backbuffer.draw(tile);
+                for (const rock of rocks) engine.backbuffer.draw(rock);
                 engine.buffer_flip();
 
                 requestAnimationFrame(tick);

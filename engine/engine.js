@@ -437,18 +437,20 @@ export class Engine {
             for (let si = 0; si < spriteCount; si++) {
                 const sprite = layer.draws[si];
                 const { x, y, width, height, texture: tex, frameIndex, vertexColors } = sprite;
+                const px = Math.floor(x);
+                const py = Math.floor(y);
                 const { u0, v0, u1, v1 } = tex.getUVs(frameIndex);
                 const [tl, tr, bl, br] = vertexColors.map(c => [
                     c.r / 255, c.g / 255, c.b / 255, c.a / 255,
                 ]);
                 const base = si * FLOATS_PER_SPRITE;
                 allVerts.set([
-                    x,         y,          u0, v0, ...tl,
-                    x + width, y,          u1, v0, ...tr,
-                    x,         y + height, u0, v1, ...bl,
-                    x + width, y,          u1, v0, ...tr,
-                    x + width, y + height, u1, v1, ...br,
-                    x,         y + height, u0, v1, ...bl,
+                    px,         py,          u0, v0, ...tl,
+                    px + width, py,          u1, v0, ...tr,
+                    px,         py + height, u0, v1, ...bl,
+                    px + width, py,          u1, v0, ...tr,
+                    px + width, py + height, u1, v1, ...br,
+                    px,         py + height, u0, v1, ...bl,
                 ], base);
             }
             device.queue.writeBuffer(this.vertexBuffer, 0, allVerts);

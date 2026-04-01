@@ -102,7 +102,7 @@ export class Texture {
      *
      * @param {GPUDevice} device
      * @param {HTMLImageElement | HTMLCanvasElement | OffscreenCanvas | ImageBitmap} source
-     * @param {{ cols?: number, rows?: number, normalMap?: HTMLImageElement | HTMLCanvasElement | OffscreenCanvas | ImageBitmap }} [options]
+     * @param {{ cols?: number, rows?: number, normalMap?: HTMLImageElement | HTMLCanvasElement | OffscreenCanvas | ImageBitmap, normalStyle?: 'opengl' | 'directx' }} [options]
      * @returns {Promise<Texture>}
      */
     static async create(device, source, options = {}) {
@@ -115,8 +115,25 @@ export class Texture {
             normalBitmap = options.normalMap instanceof ImageBitmap
                 ? options.normalMap
                 : await createImageBitmap(options.normalMap);
+            if (options.normalStyle === 'directx') {
+                normalBitmap = await Texture.#flipNormalG(normalBitmap);
+            }
         }
 
         return new Texture(device, bitmap, normalBitmap, options);
+    }
+
+    // Flips the G channel of a normal map bitmap to convert DirectX → OpenGL convention.
+    static async #flipNormalG(bitmap) {
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0);
+        const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            data[i + 1] = 255 - data[i + 1];
+        }
+        ctx.putImageData(imageData, 0, 0);
+        return createImageBitmap(canvas);
     }
 }

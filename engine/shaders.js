@@ -107,7 +107,10 @@ fn fs_main(
             light_accum += light_rgb;
 
         } else if (light.kind == LIGHT_POINT) {
-            let to_light = vec3<f32>(light.position - logical_pos, light.height);
+            // Screen space has Y-down; OpenGL normal maps have Y-up. Negate Y so
+            // the light direction vector is in the same space as the normal map.
+            let delta = light.position - logical_pos;
+            let to_light = vec3<f32>(delta.x, -delta.y, light.height);
             let dist = distance(logical_pos, light.position);
             let t = clamp(dist / light.radius, 0.0, 1.0);
             let atten = quantize(pow(1.0 - t, light.falloff), light.steps);
@@ -118,7 +121,7 @@ fn fs_main(
         } else if (light.kind == LIGHT_DIRECTIONAL) {
             // Lift 2D direction into normal-map space (z=1 = facing camera).
             // On a flat-normal sprite the result is uniform, acting like ambient.
-            let light_dir = normalize(vec3<f32>(light.direction.x, light.direction.y, 1.0));
+            let light_dir = normalize(vec3<f32>(light.direction.x, -light.direction.y, 1.0));
             let diffuse = quantize(max(dot(normal, light_dir), 0.0), light.steps);
             light_accum += light_rgb * diffuse;
         }
