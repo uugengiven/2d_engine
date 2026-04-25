@@ -1,8 +1,18 @@
-import { VERTEX_SHADER, FRAGMENT_SHADER, MAX_LIGHTS, LIGHT_BUFFER_SIZE } from './shaders.js';
+import { VERTEX_SHADER, FRAGMENT_SHADER, PALETTE_FRAGMENT_SHADER, OVERLAY_FRAGMENT_SHADER, MAX_LIGHTS, LIGHT_BUFFER_SIZE } from './shaders.js';
 import { BackBuffer } from './backbuffer.js';
 import { NearestNeighborScaler } from './scalers/nearest-neighbor.js';
 
 const LIGHT_TYPE = { ambient: 0, point: 1, directional: 2 };
+
+// Rotate point (px, py) around center (cx, cy) and snap to the pixel grid.
+function _rotatePixel(cx, cy, px, py, cosA, sinA) {
+    const dx = px - cx;
+    const dy = py - cy;
+    return [
+        Math.round(cx + dx * cosA - dy * sinA),
+        Math.round(cy + dx * sinA + dy * cosA),
+    ];
+}
 
 // Size in bytes of one Light struct on the GPU (must match WGSL struct)
 const LIGHT_STRUCT_BYTES = 64;
@@ -19,6 +29,10 @@ export class Engine {
     /** @type {GPURenderPipeline} */
     pipeline;
     /** @type {GPURenderPipeline} */
+    palettePipeline;
+    /** @type {GPURenderPipeline} */
+    overlayPipeline;
+    /** @type {GPURenderPipeline} */
     compositePipeline;
     /** @type {GPUBuffer} */
     uniformBuffer;
@@ -30,6 +44,8 @@ export class Engine {
     lightBindGroupLayout;
     /** @type {GPUBindGroupLayout} */
     spriteBindGroupLayout;
+    /** @type {GPUBindGroupLayout} */
+    paletteSpriteBindGroupLayout;
     /** @type {GPUBindGroupLayout} */
     compositeBindGroupLayout;
     /** @type {GPUTexture} */
@@ -57,6 +73,9 @@ export class Engine {
     // Sprite bind groups cached by Texture instance — same views/sampler every frame
     /** @type {WeakMap<import('./texture.js').Texture, GPUBindGroup>} */
     #spriteBindGroupCache = new WeakMap();
+    // Palette bind groups keyed by "<texId>,<srcId>,<dstId>"
+    /** @type {Map<string, GPUBindGroup>} */
+    #paletteSpriteBindGroupCache = new Map();
 
     /**
      * @param {HTMLCanvasElement} canvas
@@ -159,7 +178,7 @@ export class Engine {
             }],
         });
 
-        // Group 2: diffuse texture, normal texture, sampler
+        // Group 2 (normal / overlay): diffuse texture, normal texture, sampler
         this.spriteBindGroupLayout = device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
@@ -168,10 +187,35 @@ export class Engine {
             ],
         });
 
+        // Group 2 (palette): diffuse, normal, sampler + palette_src, palette_dst
+        this.paletteSpriteBindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+                { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+            ],
+        });
+
         this.frameBindGroup = device.createBindGroup({
             layout: frameBindGroupLayout,
             entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
         });
+
+        const SPRITE_VERTEX_BUFFERS = [{
+            arrayStride: 8 * 4,
+            attributes: [
+                { shaderLocation: 0, offset: 0,     format: 'float32x2' },
+                { shaderLocation: 1, offset: 2 * 4, format: 'float32x2' },
+                { shaderLocation: 2, offset: 4 * 4, format: 'float32x4' },
+            ],
+        }];
+
+        const SPRITE_BLEND = {
+            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'one',       dstFactor: 'one-minus-src-alpha', operation: 'add' },
+        };
 
         this.pipeline = device.createRenderPipeline({
             layout: device.createPipelineLayout({
@@ -184,33 +228,58 @@ export class Engine {
             vertex: {
                 module: device.createShaderModule({ code: VERTEX_SHADER }),
                 entryPoint: 'vs_main',
-                buffers: [{
-                    arrayStride: 8 * 4,
-                    attributes: [
-                        { shaderLocation: 0, offset: 0,     format: 'float32x2' }, // position
-                        { shaderLocation: 1, offset: 2 * 4, format: 'float32x2' }, // uv
-                        { shaderLocation: 2, offset: 4 * 4, format: 'float32x4' }, // color
-                    ],
-                }],
+                buffers: SPRITE_VERTEX_BUFFERS,
             },
             fragment: {
                 module: device.createShaderModule({ code: FRAGMENT_SHADER }),
                 entryPoint: 'fs_main',
-                targets: [{
-                    format: 'rgba8unorm',
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                    },
-                }],
+                targets: [{ format: 'rgba8unorm', blend: SPRITE_BLEND }],
+            },
+            primitive: { topology: 'triangle-list' },
+        });
+
+        const paletteLayout = device.createPipelineLayout({
+            bindGroupLayouts: [
+                frameBindGroupLayout,
+                this.lightBindGroupLayout,
+                this.paletteSpriteBindGroupLayout,
+            ],
+        });
+
+        this.palettePipeline = device.createRenderPipeline({
+            layout: paletteLayout,
+            vertex: {
+                module: device.createShaderModule({ code: VERTEX_SHADER }),
+                entryPoint: 'vs_main',
+                buffers: SPRITE_VERTEX_BUFFERS,
+            },
+            fragment: {
+                module: device.createShaderModule({ code: PALETTE_FRAGMENT_SHADER }),
+                entryPoint: 'fs_main',
+                targets: [{ format: 'rgba8unorm', blend: SPRITE_BLEND }],
+            },
+            primitive: { topology: 'triangle-list' },
+        });
+
+        const overlayLayout = device.createPipelineLayout({
+            bindGroupLayouts: [
+                frameBindGroupLayout,
+                this.lightBindGroupLayout,
+                this.spriteBindGroupLayout,
+            ],
+        });
+
+        this.overlayPipeline = device.createRenderPipeline({
+            layout: overlayLayout,
+            vertex: {
+                module: device.createShaderModule({ code: VERTEX_SHADER }),
+                entryPoint: 'vs_main',
+                buffers: SPRITE_VERTEX_BUFFERS,
+            },
+            fragment: {
+                module: device.createShaderModule({ code: OVERLAY_FRAGMENT_SHADER }),
+                entryPoint: 'fs_main',
+                targets: [{ format: 'rgba8unorm', blend: SPRITE_BLEND }],
             },
             primitive: { topology: 'triangle-list' },
         });
@@ -338,6 +407,26 @@ export class Engine {
         return this.#spriteBindGroupCache.get(tex);
     }
 
+    // Returns a palette sprite bind group, creating and caching it on first use.
+    // Keyed by the combined IDs of the diffuse texture, source palette, and dest palette.
+    #getPaletteSpriteBindGroup(tex, palSrc, palDst) {
+        const key = `${tex.id},${palSrc.id},${palDst.id}`;
+        if (!this.#paletteSpriteBindGroupCache.has(key)) {
+            const normalView = tex.normalView ?? this.flatNormalView;
+            this.#paletteSpriteBindGroupCache.set(key, this.device.createBindGroup({
+                layout: this.paletteSpriteBindGroupLayout,
+                entries: [
+                    { binding: 0, resource: tex.view },
+                    { binding: 1, resource: normalView },
+                    { binding: 2, resource: this.flatSampler },
+                    { binding: 3, resource: palSrc.view },
+                    { binding: 4, resource: palDst.view },
+                ],
+            }));
+        }
+        return this.#paletteSpriteBindGroupCache.get(key);
+    }
+
     // Writes a light array into a uniform buffer.
     #writeLightBuffer(buffer, lights) {
         const count = Math.min(lights.length, MAX_LIGHTS);
@@ -436,32 +525,72 @@ export class Engine {
             const allVerts = new Float32Array(spriteCount * FLOATS_PER_SPRITE);
             for (let si = 0; si < spriteCount; si++) {
                 const sprite = layer.draws[si];
-                const { x, y, width, height, texture: tex, frameIndex, vertexColors } = sprite;
+                const { x, y, width, height, texture: tex, frameIndex, vertexColors,
+                        flipX, flipY, rotation, pivotX, pivotY } = sprite;
                 const px = Math.floor(x);
                 const py = Math.floor(y);
-                const { u0, v0, u1, v1 } = tex.getUVs(frameIndex);
+
+                let { u0, v0, u1, v1 } = tex.getUVs(frameIndex);
+                if (flipX) { const tmp = u0; u0 = u1; u1 = tmp; }
+                if (flipY) { const tmp = v0; v0 = v1; v1 = tmp; }
+
+                // Compute corner positions, rotating around the pivot if needed.
+                // Vertex positions are rounded to the nearest pixel so that the
+                // nearest-neighbor sampler lands on whole texels (retro pixel grid).
+                let tlX, tlY, trX, trY, blX, blY, brX, brY;
+                if (rotation) {
+                    const rad = rotation * (Math.PI / 180);
+                    const cosA = Math.cos(rad);
+                    const sinA = Math.sin(rad);
+                    const cx = px + pivotX;
+                    const cy = py + pivotY;
+                    [tlX, tlY] = _rotatePixel(cx, cy, px,         py,          cosA, sinA);
+                    [trX, trY] = _rotatePixel(cx, cy, px + width,  py,          cosA, sinA);
+                    [blX, blY] = _rotatePixel(cx, cy, px,          py + height, cosA, sinA);
+                    [brX, brY] = _rotatePixel(cx, cy, px + width,  py + height, cosA, sinA);
+                } else {
+                    tlX = px;         tlY = py;
+                    trX = px + width; trY = py;
+                    blX = px;         blY = py + height;
+                    brX = px + width; brY = py + height;
+                }
+
                 const [tl, tr, bl, br] = vertexColors.map(c => [
                     c.r / 255, c.g / 255, c.b / 255, c.a / 255,
                 ]);
                 const base = si * FLOATS_PER_SPRITE;
                 allVerts.set([
-                    px,         py,          u0, v0, ...tl,
-                    px + width, py,          u1, v0, ...tr,
-                    px,         py + height, u0, v1, ...bl,
-                    px + width, py,          u1, v0, ...tr,
-                    px + width, py + height, u1, v1, ...br,
-                    px,         py + height, u0, v1, ...bl,
+                    tlX, tlY, u0, v0, ...tl,
+                    trX, trY, u1, v0, ...tr,
+                    blX, blY, u0, v1, ...bl,
+                    trX, trY, u1, v0, ...tr,
+                    brX, brY, u1, v1, ...br,
+                    blX, blY, u0, v1, ...bl,
                 ], base);
             }
             device.queue.writeBuffer(this.vertexBuffer, 0, allVerts);
 
-            pass.setPipeline(this.pipeline);
-            pass.setBindGroup(0, this.frameBindGroup);
-            pass.setBindGroup(1, lightBuffer.bindGroup);
+            let activePipeline = null;
 
             for (let si = 0; si < spriteCount; si++) {
                 const sprite = layer.draws[si];
-                pass.setBindGroup(2, this.#getSpriteBindGroup(sprite.texture));
+                const hasPalette = sprite.paletteSrc && sprite.paletteDst;
+                const needed = sprite.overlay ? this.overlayPipeline
+                             : hasPalette     ? this.palettePipeline
+                             : this.pipeline;
+
+                if (needed !== activePipeline) {
+                    pass.setPipeline(needed);
+                    pass.setBindGroup(0, this.frameBindGroup);
+                    pass.setBindGroup(1, lightBuffer.bindGroup);
+                    activePipeline = needed;
+                }
+
+                const spriteBindGroup = hasPalette
+                    ? this.#getPaletteSpriteBindGroup(sprite.texture, sprite.paletteSrc, sprite.paletteDst)
+                    : this.#getSpriteBindGroup(sprite.texture);
+
+                pass.setBindGroup(2, spriteBindGroup);
                 pass.setVertexBuffer(0, this.vertexBuffer, si * BYTES_PER_SPRITE, BYTES_PER_SPRITE);
                 pass.draw(6);
             }

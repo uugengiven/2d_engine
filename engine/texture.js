@@ -1,4 +1,8 @@
 export class Texture {
+    static #nextId = 0;
+
+    /** @type {number} Unique ID used for palette bind-group cache keying. */
+    id;
     /** @type {GPUTexture} */
     gpuTexture;
     /** @type {GPUTextureView} */
@@ -17,6 +21,7 @@ export class Texture {
      * @param {{ cols?: number, rows?: number }} options
      */
     constructor(device, bitmap, normalBitmap, options = {}) {
+        this.id = ++Texture.#nextId;
         const cols = options.cols ?? 1;
         const rows = options.rows ?? 1;
 
@@ -135,5 +140,68 @@ export class Texture {
         }
         ctx.putImageData(imageData, 0, 0);
         return createImageBitmap(canvas);
+    }
+
+    /**
+     * Extracts the unique opaque and semi-transparent colors from an image source.
+     * Fully transparent pixels (a === 0) are skipped. Useful for building a palette
+     * to pass to createPalette().
+     *
+     * @param {HTMLImageElement | HTMLCanvasElement | OffscreenCanvas | ImageBitmap} source
+     * @returns {Array<{r:number, g:number, b:number, a:number}>}
+     */
+    static extractPalette(source) {
+        const w = source.naturalWidth  ?? source.width;
+        const h = source.naturalHeight ?? source.height;
+        const canvas = new OffscreenCanvas(w, h);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(source, 0, 0);
+        const { data } = ctx.getImageData(0, 0, w, h);
+        const seen = new Set();
+        const colors = [];
+        for (let i = 0; i < data.length; i += 4) {
+            const a = data[i + 3];
+            if (a === 0) continue;
+            // Pack RGBA into a uint32 for fast deduplication
+            const key = ((data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | a) >>> 0;
+            if (!seen.has(key)) {
+                seen.add(key);
+                colors.push({ r: data[i], g: data[i + 1], b: data[i + 2], a });
+            }
+        }
+        return colors;
+    }
+
+    /**
+     * Creates a 1×N palette texture from an array of colors. The returned object has
+     * the same shape as a Texture (id, view, gpuTexture) and can be assigned directly
+     * to sprite.paletteSrc / sprite.paletteDst.
+     *
+     * @param {GPUDevice} device
+     * @param {Array<{r:number, g:number, b:number, a?:number}>} colors
+     * @returns {{ id: number, view: GPUTextureView, gpuTexture: GPUTexture }}
+     */
+    static createPalette(device, colors) {
+        const width = colors.length;
+        const data  = new Uint8Array(width * 4);
+        for (let i = 0; i < colors.length; i++) {
+            const c = colors[i];
+            data[i * 4 + 0] = c.r;
+            data[i * 4 + 1] = c.g;
+            data[i * 4 + 2] = c.b;
+            data[i * 4 + 3] = c.a ?? 255;
+        }
+        const gpuTexture = device.createTexture({
+            size:   [width, 1],
+            format: 'rgba8unorm',
+            usage:  GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        device.queue.writeTexture(
+            { texture: gpuTexture },
+            data,
+            { bytesPerRow: width * 4 },
+            [width, 1],
+        );
+        return { id: ++Texture.#nextId, view: gpuTexture.createView(), gpuTexture };
     }
 }

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Palette & Flip Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 16px;
+        }
+
+        /* ── Palette panel ── */
+        #palette-panel {
+            width: 76px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        #panel-header {
+            color: #555;
+            font: 10px monospace;
+            text-align: center;
+            padding: 3px 0 5px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+        #swatches {
+            overflow-y: auto;
+            max-height: 540px;
+        }
+        .swatch {
+            display: flex;
+            width: 68px;
+            height: 30px;
+            margin: 2px 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            flex-shrink: 0;
+        }
+        .swatch:hover { border-color: #666; }
+        .swatch.selected,
+        .swatch.selected:hover { border-color: #fff; }
+        .swatch-src,
+        .swatch-dst { flex: 1; }
+
+        /* ── Main area ── */
+        #main {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        canvas { image-rendering: pixelated; display: block; }
+        #container { position: relative; width: 960px; height: 540px; }
+        .label {
+            position: absolute;
+            color: #999;
+            font: 11px monospace;
+            text-align: center;
+            pointer-events: none;
+            width: 160px;
+        }
+
+        /* ── Controls ── */
+        #controls { display: flex; gap: 12px; align-items: center; }
+        button {
+            background: #2a2a2a;
+            color: #ccc;
+            border: 1px solid #444;
+            padding: 6px 18px;
+            font: 13px monospace;
+            cursor: pointer;
+        }
+        button:hover { background: #383838; }
+        #info { color: #555; font: 11px monospace; }
+    </style>
+</head>
+<body>
+
+    <!-- Left: scrollable palette swatches -->
+    <div id="palette-panel">
+        <div id="panel-header">palette</div>
+        <div id="swatches"></div>
+    </div>
+
+    <!-- Right: canvas + controls -->
+    <div id="main">
+        <div id="container">
+            <canvas id="engine" style="width: 960px; height: 540px;"></canvas>
+            <!-- Row 1 labels  (sprite bottoms: internal y=104 → CSS y=208) -->
+            <div class="label" style="left:  80px; top: 214px;">Original</div>
+            <div class="label" style="left: 400px; top: 214px;">Flip X</div>
+            <div class="label" style="left: 720px; top: 214px;">Flip Y</div>
+            <!-- Row 2 labels  (sprite bottoms: internal y=239 → CSS y=478) -->
+            <div class="label" style="left:  80px; top: 483px;">Palette Swap</div>
+            <div class="label" style="left: 400px; top: 483px;">Rotating 90°/s</div>
+            <div class="label" style="left: 720px; top: 483px;">Static 45°</div>
+        </div>
+        <div id="controls">
+            <button id="randomize">Randomize All</button>
+            <button id="reset">Reset to Original</button>
+            <span id="info"></span>
+        </div>
+        <!-- Off-screen; programmatically opened on right-click of a swatch -->
+        <input type="color" id="color-picker" style="position:fixed;left:-200px;top:-200px;width:1px;height:1px;opacity:0;">
+    </div>
+
+    <script type="module">
+        import { Engine }  from './engine/engine.js';
+        import { Texture } from './engine/texture.js';
+        import { Sprite }  from './engine/sprite.js';
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload  = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            // 480×270 internal (16:9), 2× upscale to 960×540
+            const engine = await Engine.init(canvas, 480, 270);
+
+            const img     = await loadImage('rogue.png');
+            const texture = await Texture.create(engine.device, img);
+
+            // Rogue is 214×235 — draw at 80×88 to keep the aspect ratio
+            const W = 80, H = 88;
+
+            // ── Palette extraction ──────────────────────────────────────────
+            const srcColors = Texture.extractPalette(img);
+            const palSrc    = Texture.createPalette(engine.device, srcColors);
+
+            // Working destination palette — starts randomized so the swap sprite
+            // is immediately visually distinct from the original.
+            const currentDstColors = srcColors.map(c => ({
+                r: Math.floor(Math.random() * 256),
+                g: Math.floor(Math.random() * 256),
+                b: Math.floor(Math.random() * 256),
+                a: c.a,
+            }));
+
+            // ── Build swatch panel ──────────────────────────────────────────
+            const selectedIndices   = new Set();
+            const dstDivs           = [];   // indexed by palette entry, for fast updates
+            const swatchEls         = [];   // swatch root elements, for selection + scrollIntoView
+            const swatchContainer   = document.getElementById('swatches');
+            const btnEl             = document.getElementById('randomize');
+            const resetEl           = document.getElementById('reset');
+            const colorPicker       = document.getElementById('color-picker');
+            let   editingIndex      = -1;
+            const infoEl            = document.getElementById('info');
+
+            function updateControls() {
+                const n = selectedIndices.size;
+                btnEl.textContent = n > 0 ? `Randomize ${n} Selected` : 'Randomize All';
+                infoEl.textContent = n > 0
+                    ? `${srcColors.length - n} unselected will be kept`
+                    : `${srcColors.length} colors · click to select`;
+            }
+
+            srcColors.forEach((src, i) => {
+                const el = document.createElement('div');
+                el.className = 'swatch';
+                el.title = `#${i}  src rgb(${src.r},${src.g},${src.b})`;
+
+                const srcHalf = document.createElement('div');
+                srcHalf.className = 'swatch-src';
+                srcHalf.style.background = `rgb(${src.r},${src.g},${src.b})`;
+
+                const dstHalf = document.createElement('div');
+                dstHalf.className = 'swatch-dst';
+                const d = currentDstColors[i];
+                dstHalf.style.background = `rgb(${d.r},${d.g},${d.b})`;
+                dstDivs.push(dstHalf);
+                swatchEls.push(el);
+
+                el.appendChild(srcHalf);
+                el.appendChild(dstHalf);
+
+                el.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    editingIndex = i;
+                    const { r, g, b } = currentDstColors[i];
+                    colorPicker.value = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+                    colorPicker.click();
+                });
+
+                el.addEventListener('click', () => {
+                    if (selectedIndices.has(i)) {
+                        selectedIndices.delete(i);
+                        el.classList.remove('selected');
+                    } else {
+                        selectedIndices.add(i);
+                        el.classList.add('selected');
+                    }
+                    updateControls();
+                });
+
+                swatchContainer.appendChild(el);
+            });
+
+            updateControls();
+
+            // Live update as the user drags in the color picker
+            colorPicker.addEventListener('input', () => {
+                if (editingIndex < 0) return;
+                const hex = colorPicker.value;
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                currentDstColors[editingIndex] = { r, g, b, a: srcColors[editingIndex].a };
+                dstDivs[editingIndex].style.background = `rgb(${r},${g},${b})`;
+                applyPalette();
+            });
+
+            // ── Sprites ─────────────────────────────────────────────────────
+            const make = (cx, cy) => new Sprite(texture, {
+                x: cx - W / 2, y: cy - H / 2, width: W, height: H,
+            });
+
+            const sNormal   = make(80,  60);
+            const sFlipX    = make(240, 60);  sFlipX.flipX  = true;
+            const sFlipY    = make(400, 60);  sFlipY.flipY  = true;
+            const sPalette  = make(80,  195);
+            const sRotating = make(240, 195);
+            const sStatic   = make(400, 195); sStatic.rotation = 45;
+
+            // All sprites except sNormal use the swappable palette
+            const paletted = [sFlipX, sFlipY, sPalette, sRotating, sStatic];
+            for (const s of paletted) s.paletteSrc = palSrc;
+
+            function applyPalette() {
+                const tex = Texture.createPalette(engine.device, currentDstColors);
+                for (const s of paletted) s.paletteDst = tex;
+            }
+            applyPalette();
+
+            const all = [sNormal, sFlipX, sFlipY, sPalette, sRotating, sStatic];
+
+            // ── Canvas click → select palette entry ─────────────────────────
+            // Read the source image into CPU memory once so we can sample it on click.
+            const imgW = img.naturalWidth, imgH = img.naturalHeight;
+            const imgCanvas = new OffscreenCanvas(imgW, imgH);
+            imgCanvas.getContext('2d').drawImage(img, 0, 0);
+            const imgData = imgCanvas.getContext('2d').getImageData(0, 0, imgW, imgH).data;
+
+            // Convert a canvas click to a sprite-local UV, accounting for rotation and flip.
+            // Returns {u, v} in [0,1] or null if the click missed this sprite.
+            function hitTest(sprite, ix, iy) {
+                const px = Math.floor(sprite.x), py = Math.floor(sprite.y);
+                let lx, ly;
+                if (sprite.rotation) {
+                    const rad  = -sprite.rotation * (Math.PI / 180);
+                    const cosA = Math.cos(rad), sinA = Math.sin(rad);
+                    const cx = px + sprite.pivotX, cy = py + sprite.pivotY;
+                    const dx = ix - cx, dy = iy - cy;
+                    lx = dx * cosA - dy * sinA + sprite.pivotX;
+                    ly = dx * sinA + dy * cosA + sprite.pivotY;
+                } else {
+                    lx = ix - px;
+                    ly = iy - py;
+                }
+                if (lx < 0 || lx >= sprite.width || ly < 0 || ly >= sprite.height) return null;
+                let u = lx / sprite.width,  v = ly / sprite.height;
+                if (sprite.flipX) u = 1 - u;
+                if (sprite.flipY) v = 1 - v;
+                return { u, v };
+            }
+
+            canvas.addEventListener('click', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                // Convert CSS pixels → internal resolution (2× upscale)
+                const ix = (e.clientX - rect.left)  / 2;
+                const iy = (e.clientY - rect.top) / 2;
+
+                // Test sprites back-to-front so the topmost drawn sprite wins
+                for (let i = all.length - 1; i >= 0; i--) {
+                    const hit = hitTest(all[i], ix, iy);
+                    if (!hit) continue;
+
+                    // Sample the source image at this UV
+                    const sx  = Math.min(Math.floor(hit.u * imgW), imgW - 1);
+                    const sy  = Math.min(Math.floor(hit.v * imgH), imgH - 1);
+                    const off = (sy * imgW + sx) * 4;
+                    const pr  = imgData[off], pg = imgData[off + 1], pb = imgData[off + 2], pa = imgData[off + 3];
+
+                    if (pa === 0) break; // transparent — no palette entry to select
+
+                    // Find the matching palette entry (exact 8-bit match)
+                    const idx = srcColors.findIndex(c =>
+                        Math.abs(c.r - pr) <= 1 &&
+                        Math.abs(c.g - pg) <= 1 &&
+                        Math.abs(c.b - pb) <= 1
+                    );
+                    if (idx < 0) break;
+
+                    // Toggle selection on the swatch
+                    if (selectedIndices.has(idx)) {
+                        selectedIndices.delete(idx);
+                        swatchEls[idx].classList.remove('selected');
+                    } else {
+                        selectedIndices.add(idx);
+                        swatchEls[idx].classList.add('selected');
+                        swatchEls[idx].scrollIntoView({ block: 'nearest' });
+                    }
+                    updateControls();
+                    break;
+                }
+            });
+
+            // ── Reset handler ────────────────────────────────────────────────
+            resetEl.addEventListener('click', () => {
+                srcColors.forEach((src, i) => {
+                    currentDstColors[i] = { ...src };
+                    dstDivs[i].style.background = `rgb(${src.r},${src.g},${src.b})`;
+                });
+                applyPalette();
+            });
+
+            // ── Randomize handler ────────────────────────────────────────────
+            btnEl.addEventListener('click', () => {
+                const toChange = selectedIndices.size > 0
+                    ? [...selectedIndices]
+                    : srcColors.map((_, i) => i);
+
+                for (const i of toChange) {
+                    currentDstColors[i] = {
+                        r: Math.floor(Math.random() * 256),
+                        g: Math.floor(Math.random() * 256),
+                        b: Math.floor(Math.random() * 256),
+                        a: srcColors[i].a,
+                    };
+                    const { r, g, b } = currentDstColors[i];
+                    dstDivs[i].style.background = `rgb(${r},${g},${b})`;
+                }
+
+                applyPalette();
+            });
+
+            // ── Render loop ──────────────────────────────────────────────────
+            let lastTime = null;
+
+            function loop(timestamp) {
+                const delta = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.1);
+                lastTime = timestamp;
+
+                sRotating.rotation = (sRotating.rotation + 90 * delta) % 360;
+
+                engine.backbuffer.clear(20, 15, 35);
+                for (const s of all) engine.backbuffer.draw(s);
+                engine.buffer_flip();
+
+                requestAnimationFrame(loop);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

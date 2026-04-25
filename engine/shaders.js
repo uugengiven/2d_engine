@@ -38,13 +38,14 @@ export const MAX_LIGHTS = 64;
 // Light buffer size in bytes: 16-byte header + MAX_LIGHTS * 64 bytes per light.
 export const LIGHT_BUFFER_SIZE = 16 + MAX_LIGHTS * 64;
 
-export const FRAGMENT_SHADER = /* wgsl */`
+// Shared lighting structs, constants, and the @group(1) binding.
+// Included verbatim in any shader that supports lights.
+const LIGHT_PRELUDE = /* wgsl */`
 const MAX_LIGHTS: u32 = ${MAX_LIGHTS}u;
 const LIGHT_AMBIENT:     u32 = 0u;
 const LIGHT_POINT:       u32 = 1u;
 const LIGHT_DIRECTIONAL: u32 = 2u;
 
-// 64 bytes, 16-byte aligned
 struct Light {
     position:  vec2<f32>,  // offset  0
     direction: vec2<f32>,  // offset  8
@@ -67,33 +68,20 @@ struct LightArray {
     lights: array<Light, ${MAX_LIGHTS}>,
 };
 
-// Optionally quantize a 0–1 value into [steps] discrete bands.
-// steps == 0 passes the value through unchanged.
 fn quantize(value: f32, steps: f32) -> f32 {
     if (steps <= 0.0) { return value; }
     return floor(value * steps) / steps;
 }
 
 @group(1) @binding(0) var<uniform> light_data: LightArray;
+`;
 
-@group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
-@group(2) @binding(1) var normal_texture:  texture_2d<f32>;
-@group(2) @binding(2) var sprite_sampler:  sampler;
+// compute_lighting — shared lighting accumulation function.
+// Requires light_data, normal_texture, sprite_sampler declared in the same module.
+const LIGHTING_FN = /* wgsl */`
+fn compute_lighting(tex_color: vec4<f32>, uv: vec2<f32>, logical_pos: vec2<f32>) -> vec4<f32> {
+    if (light_data.count == 0u) { return tex_color; }
 
-@fragment
-fn fs_main(
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) logical_pos: vec2<f32>,
-) -> @location(0) vec4<f32> {
-    let tex_color = textureSample(diffuse_texture, sprite_sampler, uv) * color;
-
-    // No lights in this layer — return full brightness, preserving vertex color
-    if (light_data.count == 0u) {
-        return tex_color;
-    }
-
-    // Decode normal map from [0,1] texture space to [-1,1] normal space
     let normal_sample = textureSample(normal_texture, sprite_sampler, uv).rgb;
     let normal = normalize(normal_sample * 2.0 - 1.0);
 
@@ -101,14 +89,12 @@ fn fs_main(
 
     for (var i = 0u; i < light_data.count; i++) {
         let light = light_data.lights[i];
-        let light_rgb = light.color.rgb * light.color.w;  // rgb * intensity
+        let light_rgb = light.color.rgb * light.color.w;
 
         if (light.kind == LIGHT_AMBIENT) {
             light_accum += light_rgb;
 
         } else if (light.kind == LIGHT_POINT) {
-            // Screen space has Y-down; OpenGL normal maps have Y-up. Negate Y so
-            // the light direction vector is in the same space as the normal map.
             let delta = light.position - logical_pos;
             let to_light = vec3<f32>(delta.x, -delta.y, light.height);
             let dist = distance(logical_pos, light.position);
@@ -119,8 +105,6 @@ fn fs_main(
             light_accum += light_rgb * atten * diffuse;
 
         } else if (light.kind == LIGHT_DIRECTIONAL) {
-            // Lift 2D direction into normal-map space (z=1 = facing camera).
-            // On a flat-normal sprite the result is uniform, acting like ambient.
             let light_dir = normalize(vec3<f32>(light.direction.x, -light.direction.y, 1.0));
             let diffuse = quantize(max(dot(normal, light_dir), 0.0), light.steps);
             light_accum += light_rgb * diffuse;
@@ -128,5 +112,85 @@ fn fs_main(
     }
 
     return vec4<f32>(tex_color.rgb * light_accum, tex_color.a);
+}
+`;
+
+// Standard lit sprite shader.
+export const FRAGMENT_SHADER = /* wgsl */`
+${LIGHT_PRELUDE}
+
+@group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
+@group(2) @binding(1) var normal_texture:  texture_2d<f32>;
+@group(2) @binding(2) var sprite_sampler:  sampler;
+
+${LIGHTING_FN}
+
+@fragment
+fn fs_main(
+    @location(0) uv:          vec2<f32>,
+    @location(1) color:       vec4<f32>,
+    @location(2) logical_pos: vec2<f32>,
+) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(diffuse_texture, sprite_sampler, uv) * color;
+    return compute_lighting(tex_color, uv, logical_pos);
+}
+`;
+
+// Palette-swap shader. Bindings 3 and 4 are the source and destination palette strips
+// (1×N textures where N is the number of palette entries). Each pixel's RGB is compared
+// against each source entry; if it matches within 8-bit precision, the destination RGB
+// replaces it. Alpha is preserved from the original pixel, multiplied by the destination
+// alpha (so dst.a = 255 is a no-op on alpha; lower values add transparency).
+export const PALETTE_FRAGMENT_SHADER = /* wgsl */`
+${LIGHT_PRELUDE}
+
+@group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
+@group(2) @binding(1) var normal_texture:  texture_2d<f32>;
+@group(2) @binding(2) var sprite_sampler:  sampler;
+@group(2) @binding(3) var palette_src:     texture_2d<f32>;
+@group(2) @binding(4) var palette_dst:     texture_2d<f32>;
+
+${LIGHTING_FN}
+
+fn palette_remap(raw: vec4<f32>) -> vec4<f32> {
+    let count = i32(textureDimensions(palette_src).x);
+    for (var i: i32 = 0; i < count; i++) {
+        let src = textureLoad(palette_src, vec2<i32>(i, 0), 0);
+        if (all(abs(raw.rgb - src.rgb) < vec3<f32>(0.5 / 255.0))) {
+            let dst = textureLoad(palette_dst, vec2<i32>(i, 0), 0);
+            return vec4<f32>(dst.rgb, raw.a * dst.a);
+        }
+    }
+    return raw;
+}
+
+@fragment
+fn fs_main(
+    @location(0) uv:          vec2<f32>,
+    @location(1) color:       vec4<f32>,
+    @location(2) logical_pos: vec2<f32>,
+) -> @location(0) vec4<f32> {
+    let raw_color = textureSample(diffuse_texture, sprite_sampler, uv);
+    let tex_color = palette_remap(raw_color) * color;
+    return compute_lighting(tex_color, uv, logical_pos);
+}
+`;
+
+// Overlay shader. Ignores the texture's RGB entirely — uses vertex color as a flat
+// fill color and the texture's alpha as the shape mask. Unlit by design (overlay is
+// intended for effects like hit-flash where lighting would fight the effect).
+// Set all four vertex colors to the desired overlay color before drawing.
+export const OVERLAY_FRAGMENT_SHADER = /* wgsl */`
+@group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
+@group(2) @binding(2) var sprite_sampler:  sampler;
+
+@fragment
+fn fs_main(
+    @location(0) uv:          vec2<f32>,
+    @location(1) color:       vec4<f32>,
+    @location(2) logical_pos: vec2<f32>,
+) -> @location(0) vec4<f32> {
+    let alpha = textureSample(diffuse_texture, sprite_sampler, uv).a;
+    return vec4<f32>(color.rgb, alpha * color.a);
 }
 `;

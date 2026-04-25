@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rotation Demo</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; gap: 12px; }
+        canvas { image-rendering: pixelated; }
+        #labels { color: #aaa; font: 12px monospace; display: flex; gap: 32px; }
+        #labels span { text-align: center; width: 200px; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="width: 960px; height: 720px;"></canvas>
+    <div id="labels">
+        <span>45°/s · center pivot</span>
+        <span>180°/s · center pivot</span>
+        <span>−90°/s · top-left pivot</span>
+        <span>270°/s · center + flipX</span>
+    </div>
+
+    <script type="module">
+        import { Engine }  from './engine/engine.js';
+        import { Texture } from './engine/texture.js';
+        import { Sprite }  from './engine/sprite.js';
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        // 1 = 160×120 (6px per pixel), 2 = 320×240 (3px), 3 = 480×360 (2px)
+        const RES = 2;
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 160 * RES, 120 * RES);
+
+            const img = await loadImage('dvd_logo.png');
+            const texture = await Texture.create(engine.device, img);
+
+            const W = 38 * RES, H = 17 * RES;
+
+            // Sprite 1 — slow, center pivot (top-left quadrant)
+            const s1 = new Sprite(texture, { x: 21 * RES - W / 2, y: 30 * RES - H / 2, width: W, height: H });
+
+            // Sprite 2 — fast, center pivot (top-right quadrant)
+            const s2 = new Sprite(texture, { x: 120 * RES - W / 2, y: 30 * RES - H / 2, width: W, height: H });
+
+            // Sprite 3 — medium reverse, top-left pivot (bottom-left quadrant)
+            const s3 = new Sprite(texture, { x: 21 * RES - W / 2, y: 90 * RES - H / 2, width: W, height: H });
+            s3.pivotX = 0;
+            s3.pivotY = 0;
+
+            // Sprite 4 — very fast, center pivot, flipX (bottom-right quadrant)
+            const s4 = new Sprite(texture, { x: 120 * RES - W / 2, y: 90 * RES - H / 2, width: W, height: H });
+            s4.flipX = true;
+
+            const sprites = [
+                { sprite: s1, speed:   45 },
+                { sprite: s2, speed:  180 },
+                { sprite: s3, speed:  -90 },
+                { sprite: s4, speed:  270 },
+            ];
+
+            let lastTime = null;
+
+            function loop(timestamp) {
+                const delta = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.1);
+                lastTime = timestamp;
+
+                for (const { sprite, speed } of sprites) {
+                    sprite.rotation = (sprite.rotation + speed * delta) % 360;
+                }
+
+                engine.backbuffer.clear(255, 255, 255);
+                for (const { sprite } of sprites) engine.backbuffer.draw(sprite);
+                engine.buffer_flip();
+
+                requestAnimationFrame(loop);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>
