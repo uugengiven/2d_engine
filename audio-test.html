@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Tests</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090912;
+      color: #c0cce0;
+      font-family: 'Courier New', monospace;
+      font-size: 0.82rem;
+      padding: 24px 20px;
+    }
+    h1 { font-size: 1.1rem; color: #6ab8f0; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 6px; }
+    .subtitle { font-size: 0.7rem; color: #3a4a5e; margin-bottom: 24px; }
+
+    h2 { font-size: 0.8rem; color: #8898b0; text-transform: uppercase; letter-spacing: 2px;
+         margin: 20px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #1e2438; }
+
+    /* ── test rows ── */
+    .test-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid #0e0e1a;
+    }
+    .test-name { flex: 1; color: #8898b0; }
+    .test-desc { flex: 2; font-size: 0.72rem; color: #3a4a5e; }
+    .badge {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 2px;
+      min-width: 52px;
+      text-align: center;
+      border: 1px solid transparent;
+    }
+    .badge.pass    { color: #5db87a; border-color: #2a5a38; background: #0e1e14; }
+    .badge.fail    { color: #f06a6a; border-color: #5a2a2a; background: #1e0e0e; }
+    .badge.pending { color: #3a4a5e; border-color: #1e2438; }
+    .badge.running { color: #f0c060; border-color: #5a4a20; background: #1a1408; }
+
+    .fail-msg { font-size: 0.7rem; color: #f06a6a; margin-top: 2px; padding-left: 4px; }
+
+    button {
+      background: #111120; border: 1px solid #253050; color: #6ab8f0;
+      font-family: inherit; font-size: 0.75rem; padding: 3px 10px;
+      border-radius: 3px; cursor: pointer; white-space: nowrap;
+    }
+    button:hover { background: #1a1e38; }
+    button:disabled { opacity: 0.4; cursor: default; }
+
+    .btn-pass { color: #5db87a; border-color: #2a5a38; }
+    .btn-fail { color: #f06a6a; border-color: #5a2a2a; }
+
+    .bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin: 8px 0 14px;
+    }
+
+    #load-status { font-size: 0.75rem; }
+    .ok  { color: #5db87a; }
+    .err { color: #f06a6a; }
+    .warn { color: #f0c060; }
+
+    .note { font-size: 0.68rem; color: #3a4a5e; margin-top: 4px; padding-left: 4px; }
+
+    .summary {
+      margin-top: 20px;
+      padding: 10px 14px;
+      background: #0e0e1a;
+      border: 1px solid #1e2438;
+      border-radius: 4px;
+      font-size: 0.78rem;
+    }
+    .summary .score { color: #6ab8f0; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Audio Tests</h1>
+  <div class="subtitle">Automated state tests + listening tests for the OscSynth / Sequencer stack.</div>
+
+  <div id="load-status">Loading instruments…</div>
+
+  <!-- ── automated ── -->
+  <h2>Automated — Voice State Machine</h2>
+  <div class="bar">
+    <button id="run-all-btn">Run All Automated</button>
+    <button id="all-off-btn">All Off</button>
+    <span id="auto-summary"></span>
+  </div>
+  <div id="auto-tests"></div>
+
+  <!-- ── listening ── -->
+  <h2>Listening Tests <span style="font-size:0.65rem;color:#3a4a5e;text-transform:none;letter-spacing:0">(requires audio unlock)</span></h2>
+  <div class="bar">
+    <button id="unlock-btn">🔊 Unlock Audio</button>
+    <span id="unlock-status" style="font-size:0.72rem;color:#3a4a5e"></span>
+  </div>
+  <div id="listen-tests"></div>
+
+  <div class="summary" id="summary" style="display:none"></div>
+
+  <script type="module">
+    import { AudioManager } from './engine/audio.js';
+    import { OscSynth }     from './engine/synth.js';
+    import { Sequencer }    from './engine/sequencer.js';
+
+    // ── setup ─────────────────────────────────────────────────────────────────
+    const audio = new AudioManager();
+    audio.createChannel('test', { volume: 0.7 });
+
+    // Pre-load instrument definitions (JSON only — we'll new OscSynth directly
+    // in tests so each test gets a clean, isolated voice pool).
+    const URLS = {
+      pulse25:  'instruments/nes-pulse-25.json',
+      triangle: 'instruments/nes-triangle.json',
+      noise:    'instruments/nes-noise.json',
+      fat:      'instruments/fat-triangle.json',
+    };
+    let DEFS = {};
+    let loadOk = false;
+
+    try {
+      const entries = await Promise.all(
+        Object.entries(URLS).map(([k, u]) => fetch(u).then(r => r.json()).then(d => [k, d]))
+      );
+      DEFS = Object.fromEntries(entries);
+      loadOk = true;
+      document.getElementById('load-status').innerHTML = '<span class="ok">Instruments loaded.</span>';
+    } catch (e) {
+      document.getElementById('load-status').innerHTML = `<span class="err">Load failed: ${e.message}</span>`;
+    }
+
+    // All OscSynth instances ever created — lets allOff() reach everything.
+    const allInsts = [];
+
+    function makeInst(defKey, overrides = {}) {
+      const ch  = audio.getChannel('test');
+      const def = { ...DEFS[defKey], ...overrides };
+      const inst = new OscSynth(audio.context, ch, def, { voices: overrides.voices });
+      allInsts.push(inst);
+      return inst;
+    }
+
+    function allOff() {
+      for (const inst of allInsts) inst.allNotesOff();
+    }
+
+    // ── test framework ────────────────────────────────────────────────────────
+    function assert(cond, msg) { if (!cond) throw new Error(msg ?? 'assertion failed'); }
+    function assertEqual(a, b, msg) {
+      if (a !== b) throw new Error(msg ?? `expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+    }
+    function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // ── automated test definitions ────────────────────────────────────────────
+    const AUTO_TESTS = [
+      {
+        name: 'Initial state',
+        desc: 'All voices start free.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 3 });
+          const s = inst.voiceStates;
+          assertEqual(s.length, 3, 'expected 3 voices');
+          assert(s.every(v => v.state === 'free'), 'all should be free');
+        },
+      },
+      {
+        name: 'noteOn allocates',
+        desc: 'One voice becomes playing after a noteOn.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 3 });
+          inst.noteOn(60, 0.8);
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 1, 'exactly one playing');
+          assertEqual(playing[0].note, 60, 'note should be 60');
+        },
+      },
+      {
+        name: 'noteOff transitions',
+        desc: 'Voice moves to releasing after noteOff.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 2 });
+          inst.noteOn(60, 0.8);
+          inst.noteOff(60);
+          const s = inst.voiceStates;
+          assert(s.some(v => v.state === 'releasing'), 'one should be releasing');
+          assert(s.every(v => v.state !== 'playing'), 'none should still be playing');
+        },
+      },
+      {
+        name: 'Full allocation',
+        desc: 'N noteOns fill exactly N voices.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 3 });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(64, 0.8);
+          inst.noteOn(67, 0.8);
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 3, 'all 3 voices should be playing');
+        },
+      },
+      {
+        name: 'Oldest steal',
+        desc: '4th noteOn on a 3-voice instrument steals the oldest voice.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 3, stealPolicy: 'oldest' });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(64, 0.8);
+          inst.noteOn(67, 0.8);
+          inst.noteOn(71, 0.8); // should steal note 60 (oldest)
+          const s = inst.voiceStates;
+          const playing = s.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 3, 'still 3 playing voices');
+          assert(!playing.some(v => v.note === 60), 'note 60 should have been stolen');
+          assert(playing.some(v => v.note === 71), 'note 71 should be playing');
+        },
+      },
+      {
+        name: 'None policy drops',
+        desc: 'stealPolicy:"none" drops excess notes silently.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 2, stealPolicy: 'none' });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(64, 0.8);
+          inst.noteOn(67, 0.8); // should be dropped
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 2, 'only 2 voices playing');
+          assert(!playing.some(v => v.note === 67), 'note 67 should have been dropped');
+        },
+      },
+      {
+        name: 'Same-note replaces',
+        desc: 'A second noteOn on the same pitch releases the first voice.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 3 });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(60, 0.9); // replace
+          const s = inst.voiceStates;
+          const playing = s.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 1, 'only one voice playing');
+          assertEqual(playing[0].note, 60);
+          assert(s.some(v => v.state === 'releasing'), 'old voice should be releasing');
+        },
+      },
+      {
+        name: 'allNotesOff',
+        desc: 'allNotesOff() leaves no voices in playing state.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 3 });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(64, 0.8);
+          inst.noteOn(67, 0.8);
+          inst.allNotesOff();
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 0, 'no voices should be playing');
+        },
+      },
+      {
+        name: 'Stale noteOff guard',
+        desc: 'A noteOff tagged with an old timestamp does not release a newer voice.',
+        async fn() {
+          const inst = makeInst('noise', { voices: 2 });
+          const T = audio.context.currentTime + 0.5;
+          // Start a voice at future time T
+          inst.noteOn(60, 0.8, T);
+          // Fire a "stale" noteOff with a timestamp well before T
+          inst.noteOff(60, T - 1.0);
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 1, 'voice should still be playing — stale noteOff ignored');
+        },
+      },
+      {
+        name: 'Valid noteOff fires',
+        desc: 'A noteOff with the correct timestamp releases the voice.',
+        async fn() {
+          const inst = makeInst('noise', { voices: 2 });
+          const T = audio.context.currentTime + 0.5;
+          inst.noteOn(60, 0.8, T);
+          // noteOff tagged with same start time — should release
+          inst.noteOff(60, T);
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 0, 'voice should be releasing after valid noteOff');
+        },
+      },
+      {
+        name: 'Voice reuse after release',
+        desc: 'After the release tail settles, voice returns to free and is reusable.',
+        async fn() {
+          const inst = makeInst('pulse25', { voices: 1 });
+          inst.noteOn(60, 0.8);
+          inst.noteOff(60);
+          // Wait for fallback cleanup (release=0.03, timeout=~130ms)
+          await wait(250);
+          const s = inst.voiceStates;
+          assert(s.every(v => v.state === 'free'), 'voice should be free after release');
+          // Should be able to allocate again
+          inst.noteOn(72, 0.8);
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(playing.length, 1, 'new note should play');
+          assertEqual(playing[0].note, 72);
+        },
+      },
+      {
+        name: 'Multi-instrument isolation',
+        desc: 'Melody (3 voices) plays a full scale with no noteOffs; bass (1 voice) holds C3. Instruments must never steal from each other.',
+        async fn() {
+          const melody = makeInst('pulse25',  { voices: 3, stealPolicy: 'oldest' });
+          const bass   = makeInst('triangle', { voices: 1, stealPolicy: 'oldest' });
+
+          // Bass holds C3
+          bass.noteOn(48, 0.65);
+
+          // Play C4→C5 scale with no noteOffs — after 8 notes on 3 voices,
+          // the last 3 notes played (A4=69, B4=71, C5=72) should be the survivors.
+          const scale = [60, 62, 64, 65, 67, 69, 71, 72];
+          for (const n of scale) melody.noteOn(n, 0.8);
+
+          const mPlaying = melody.voiceStates.filter(v => v.state === 'playing');
+          const bPlaying = bass.voiceStates.filter(v => v.state === 'playing');
+
+          assertEqual(mPlaying.length, 3, `melody: expected 3 playing, got ${mPlaying.length}`);
+          assertEqual(bPlaying.length, 1, `bass: expected 1 playing, got ${bPlaying.length}`);
+
+          const mNotes = mPlaying.map(v => v.note).sort((a, b) => a - b);
+          assert(mNotes.includes(69), `A4 (69) should be playing — got [${mNotes}]`);
+          assert(mNotes.includes(71), `B4 (71) should be playing — got [${mNotes}]`);
+          assert(mNotes.includes(72), `C5 (72) should be playing — got [${mNotes}]`);
+
+          assertEqual(bPlaying[0].note, 48, 'bass note should still be C3 (48) — not stolen by melody');
+        },
+      },
+      {
+        name: 'Rapid same-note (noise pattern)',
+        desc: 'Simulates the perc pattern bug: rapid note-60 hits with queued noteOffs should not silence subsequent notes.',
+        async fn() {
+          const inst = makeInst('noise', { voices: 2 });
+          const ctx = audio.context;
+          const rowDur = 60 / 160 / 4; // 160 BPM, 16th notes
+
+          // Schedule 8 hits, all note 60, as the sequencer would
+          for (let i = 0; i < 8; i++) {
+            const t = ctx.currentTime + i * rowDur;
+            inst.noteOn(60, 0.8, t);
+            // Simulate sequencer's tagged noteOff
+            const offT = t + rowDur - 0.005;
+            setTimeout(() => inst.noteOff(60, t), Math.max(0, (offT - ctx.currentTime) * 1000));
+          }
+
+          // After all are scheduled, at least one voice should be playing (not all silenced)
+          const playing = inst.voiceStates.filter(v => v.state === 'playing');
+          assert(playing.length > 0, 'at least one voice should still be playing');
+          // Wait for the last hit to fire and verify no lingering voices are stuck playing
+          await wait(Math.ceil(8 * rowDur * 1000) + 300);
+          const stuck = inst.voiceStates.filter(v => v.state === 'playing');
+          assertEqual(stuck.length, 0, 'no voices should be stuck playing after all notes end');
+        },
+      },
+    ];
+
+    // ── listening test definitions ────────────────────────────────────────────
+    const LISTEN_TESTS = [
+      {
+        name: 'Single tone',
+        desc: 'Plays C5 on Pulse 25% for 0.5s. Should be a clean square wave tone.',
+        async play() {
+          const inst = makeInst('pulse25', { voices: 2 });
+          inst.noteOn(72, 0.8);
+          await wait(500);
+          inst.noteOff(72);
+        },
+      },
+      {
+        name: 'Oldest steal — clean',
+        desc: 'Plays 4 rapid notes on a 2-voice instrument. Stealing should sound clean, no pops.',
+        async play() {
+          const inst = makeInst('pulse25', { voices: 2, stealPolicy: 'oldest' });
+          for (const note of [60, 64, 67, 71, 74, 72]) {
+            inst.noteOn(note, 0.8);
+            await wait(120);
+          }
+          inst.allNotesOff();
+        },
+      },
+      {
+        name: 'Noise rapid hits',
+        desc: 'Plays 16 noise hits at 160 BPM 16th-note spacing. Every hit should be audible — this tests the stale noteOff fix.',
+        async play() {
+          await audio.resume();
+          const inst = makeInst('noise', { voices: 2 });
+          const rowMs = (60 / 160 / 4) * 1000;
+          for (let i = 0; i < 16; i++) {
+            inst.noteOn(60, 0.8);
+            await wait(rowMs);
+          }
+          inst.allNotesOff();
+        },
+      },
+      {
+        name: 'Fat triangle detuning',
+        desc: 'Plays a chord on the fat triangle. You should hear a gentle beating/chorus from the ±12 cent detuning.',
+        async play() {
+          const inst = makeInst('fat', { voices: 4 });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(64, 0.8);
+          inst.noteOn(67, 0.8);
+          await wait(1500);
+          inst.allNotesOff();
+        },
+      },
+      {
+        name: 'allNotesOff — no hangs',
+        desc: 'Starts several notes then calls allNotesOff. Nothing should keep ringing after the button is pressed.',
+        async play() {
+          const inst = makeInst('fat', { voices: 4 });
+          inst.noteOn(60, 0.8);
+          inst.noteOn(64, 0.8);
+          inst.noteOn(67, 0.8);
+          await wait(300);
+          inst.allNotesOff();
+          // Silence should follow within ~100ms (release)
+        },
+      },
+      {
+        name: 'Multi-instrument steal + isolation',
+        desc: `Melody (Pulse 25%, 3 voices) plays a C major scale with NO noteOffs at 450 ms/note.
+               Bass (Triangle, 1 voice) bounces C3 every 300 ms throughout.
+               You should hear: (1) the melody chord thickening until 3 voices are full,
+               then each new note causes the oldest melody note to drop;
+               (2) the bass continuing steadily with no gaps — melody stealing must never touch it.`,
+        async play() {
+          await audio.resume();
+          const melody = makeInst('pulse25',  { voices: 3, stealPolicy: 'oldest' });
+          const bass   = makeInst('triangle', { voices: 1, stealPolicy: 'oldest' });
+
+          const scale  = [60, 62, 64, 65, 67, 69, 71, 72]; // C4 → C5
+          const noteMs = 450;  // time between melody notes
+          const bassMs = 300;  // bass rearticulation interval
+
+          let running = true;
+
+          // Bass loop — hits C3 repeatedly; same-note replacement keeps it mono
+          (async () => {
+            while (running) {
+              bass.noteOn(48, 0.65);
+              await wait(bassMs);
+            }
+          })();
+
+          // Melody scale — no noteOff, oldest steal kicks in from the 4th note
+          for (const note of scale) {
+            melody.noteOn(note, 0.8);
+            await wait(noteMs);
+          }
+
+          await wait(600); // let the last chord ring
+          running = false;
+          melody.allNotesOff();
+          bass.allNotesOff();
+        },
+      },
+      {
+        name: 'Sequencer stop — no hangs',
+        desc: 'Runs the sequencer for 1s then stops. All notes should cut cleanly.',
+        async play() {
+          await audio.resume();
+          const lead  = makeInst('pulse25',  { voices: 3 });
+          const bass  = makeInst('triangle', { voices: 2 });
+          const perc  = makeInst('noise',    { voices: 2 });
+          const seq = new Sequencer(audio.context);
+          seq.bpm = 160;
+          seq.setPattern({
+            ticksPerBeat: 4, length: 32,
+            tracks: [
+              { id: 'lead', instrument: lead, events: [
+                {row:0,note:72,velocity:0.85,length:2},{row:4,note:76,velocity:0.8,length:2},
+                {row:8,note:79,velocity:0.85,length:2},{row:12,note:81,velocity:0.85,length:4},
+              ]},
+              { id: 'bass', instrument: bass, events: [
+                {row:0,note:48,velocity:0.65,length:4},{row:8,note:55,velocity:0.65,length:4},
+              ]},
+              { id: 'perc', instrument: perc, events: [
+                {row:0,note:60,velocity:0.85,length:1},{row:4,note:60,velocity:0.6,length:1},
+                {row:8,note:60,velocity:0.85,length:1},{row:12,note:60,velocity:0.6,length:1},
+                {row:2,note:60,velocity:0.28,length:1},{row:6,note:60,velocity:0.28,length:1},
+                {row:10,note:60,velocity:0.28,length:1},{row:14,note:60,velocity:0.28,length:1},
+              ]},
+            ],
+          });
+          seq.start();
+          await wait(1200);
+          seq.stop(); // should call allNotesOff on all tracks
+        },
+      },
+    ];
+
+    // ── render helpers ────────────────────────────────────────────────────────
+    function renderAutoTests() {
+      const container = document.getElementById('auto-tests');
+      container.innerHTML = AUTO_TESTS.map((t, i) => `
+        <div class="test-row" id="auto-${i}">
+          <span class="test-name">${t.name}</span>
+          <span class="test-desc">${t.desc}</span>
+          <span class="badge pending" id="auto-badge-${i}">pending</span>
+          <button onclick="runAutoTest(${i})">Run</button>
+        </div>
+        <div class="fail-msg" id="auto-msg-${i}" style="display:none"></div>
+      `).join('');
+    }
+
+    function renderListenTests() {
+      const container = document.getElementById('listen-tests');
+      container.innerHTML = LISTEN_TESTS.map((t, i) => `
+        <div class="test-row" id="listen-${i}">
+          <span class="test-name">${t.name}</span>
+          <span class="test-desc">${t.desc}</span>
+          <button onclick="playListenTest(${i})" id="listen-play-${i}">▶ Play</button>
+          <button class="btn-pass" onclick="markListen(${i},'pass')" id="listen-pass-${i}" disabled>✓ Pass</button>
+          <button class="btn-fail" onclick="markListen(${i},'fail')" id="listen-fail-${i}" disabled>✗ Fail</button>
+          <span class="badge pending" id="listen-badge-${i}">—</span>
+        </div>
+        <div class="fail-msg" id="listen-msg-${i}" style="display:none"></div>
+      `).join('');
+    }
+
+    // ── test runners ──────────────────────────────────────────────────────────
+    const autoResults = new Array(AUTO_TESTS.length).fill(null);
+
+    window.runAutoTest = async function(i) {
+      if (!loadOk) return;
+      setBadge(`auto-badge-${i}`, 'running', 'running…');
+      document.getElementById(`auto-msg-${i}`).style.display = 'none';
+      try {
+        await AUTO_TESTS[i].fn();
+        setBadge(`auto-badge-${i}`, 'pass', 'pass');
+        autoResults[i] = true;
+      } catch (e) {
+        setBadge(`auto-badge-${i}`, 'fail', 'fail');
+        const msg = document.getElementById(`auto-msg-${i}`);
+        msg.textContent = '↳ ' + e.message;
+        msg.style.display = 'block';
+        autoResults[i] = false;
+      } finally {
+        allOff(); // silence anything the test left playing
+      }
+      updateAutoSummary();
+    };
+
+    document.getElementById('run-all-btn').addEventListener('click', async () => {
+      for (let i = 0; i < AUTO_TESTS.length; i++) await runAutoTest(i);
+    });
+
+    document.getElementById('all-off-btn').addEventListener('click', allOff);
+
+    window.playListenTest = async function(i) {
+      if (!loadOk) return;
+      const playBtn = document.getElementById(`listen-play-${i}`);
+      const passBtn = document.getElementById(`listen-pass-${i}`);
+      const failBtn = document.getElementById(`listen-fail-${i}`);
+      playBtn.disabled = true;
+      playBtn.textContent = '…';
+      passBtn.disabled = true;
+      failBtn.disabled = true;
+      try {
+        await LISTEN_TESTS[i].play();
+      } catch (e) {
+        console.error(e);
+      }
+      playBtn.disabled = false;
+      playBtn.textContent = '▶ Play';
+      passBtn.disabled = false;
+      failBtn.disabled = false;
+    };
+
+    window.markListen = function(i, result) {
+      setBadge(`listen-badge-${i}`, result, result);
+    };
+
+    document.getElementById('unlock-btn').addEventListener('click', async () => {
+      await audio.resume();
+      document.getElementById('unlock-status').textContent = 'Audio unlocked.';
+      document.getElementById('unlock-status').className = 'ok';
+    });
+
+    function setBadge(id, cls, text) {
+      const el = document.getElementById(id);
+      el.className = `badge ${cls}`;
+      el.textContent = text;
+    }
+
+    function updateAutoSummary() {
+      const done   = autoResults.filter(r => r !== null).length;
+      const passed = autoResults.filter(r => r === true).length;
+      const failed = autoResults.filter(r => r === false).length;
+      document.getElementById('auto-summary').innerHTML =
+        `<span class="${failed > 0 ? 'err' : 'ok'}">${passed}/${done} passed${failed > 0 ? `, ${failed} failed` : ''}</span>`;
+    }
+
+    // ── init ──────────────────────────────────────────────────────────────────
+    renderAutoTests();
+    renderListenTests();
+  </script>
+</body>
+</html>

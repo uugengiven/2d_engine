@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #090912;
+      color: #c0cce0;
+      font-family: 'Courier New', monospace;
+      font-size: 0.82rem;
+      padding: 20px 18px;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      color: #6ab8f0;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    /* ── shared controls ── */
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      background: #0e0e1a;
+      border: 1px solid #1e2438;
+      border-radius: 4px;
+      padding: 9px 12px;
+      margin-bottom: 10px;
+    }
+
+    .ctrl {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ctrl label {
+      font-size: 0.65rem;
+      color: #566880;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+
+    input[type=number], input[type=text] {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #c0cce0;
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 3px 6px;
+      border-radius: 3px;
+      width: 58px;
+    }
+    input[type=number] { width: 52px; }
+    input[type=range] { width: 80px; accent-color: #6ab8f0; cursor: pointer; }
+    input:focus { outline: none; border-color: #6ab8f0; }
+
+    select {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #c0cce0;
+      font-family: inherit;
+      font-size: 0.78rem;
+      padding: 3px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      max-width: 130px;
+    }
+    select:focus { outline: none; border-color: #6ab8f0; }
+
+    button {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #6ab8f0;
+      font-family: inherit;
+      font-size: 0.78rem;
+      padding: 4px 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.08s, border-color 0.08s;
+      white-space: nowrap;
+    }
+    button:hover   { background: #1a1e38; border-color: #6ab8f0; }
+    button.playing { border-color: #f06a6a; color: #f06a6a; }
+    button.active  { background: #1e2840; border-color: #6ab8f0; }
+
+    .val { font-size: 0.78rem; color: #6ab8f0; min-width: 28px; }
+    .row-badge { font-size: 0.75rem; color: #3a4a5e; }
+    .row-badge span { color: #6ab8f0; }
+
+    /* ── editor bar ── */
+    #editor-bar { min-height: 42px; }
+    #editor-bar .placeholder { font-size: 0.72rem; color: #3a4a5e; }
+    #editor-fields { display: none; align-items: center; gap: 16px; flex-wrap: wrap; }
+    #editor-fields.visible { display: flex; }
+    #ed-note { width: 52px; text-transform: uppercase; }
+
+    /* ── key guide ── */
+    .key-guide {
+      font-size: 0.62rem;
+      color: #3a4a5e;
+      margin-bottom: 12px;
+      line-height: 1.8;
+    }
+    .key-guide .hl { color: #566880; }
+
+    /* ── grid ── */
+    .grid-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 320px);
+      border: 1px solid #1e2438;
+      border-radius: 4px;
+    }
+
+    table {
+      border-collapse: collapse;
+      min-width: 100%;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: #0e0e1a;
+      z-index: 2;
+      padding: 6px 4px;
+      border-bottom: 2px solid #253050;
+      vertical-align: bottom;
+    }
+
+    th.row-num-h { width: 36px; min-width: 36px; }
+
+    .track-header {
+      min-width: 148px;
+      text-align: left;
+    }
+
+    .track-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .mute-btn {
+      padding: 3px 7px;
+      font-size: 0.7rem;
+      color: #566880;
+      border-color: #1e2438;
+    }
+    .mute-btn.muted { color: #f06a6a; border-color: #f06a6a; }
+
+    .del-track-btn {
+      padding: 3px 7px;
+      font-size: 0.85rem;
+      color: #3a4a5e;
+      border-color: #1e2438;
+    }
+    .del-track-btn:hover { color: #f06a6a; border-color: #f06a6a; }
+
+    th.add-col { width: 32px; }
+
+    /* ── rows ── */
+    td {
+      padding: 0;
+      border-bottom: 1px solid #111120;
+      vertical-align: middle;
+    }
+
+    td.row-num {
+      text-align: right;
+      padding-right: 8px;
+      color: #2a3a50;
+      font-size: 0.72rem;
+      width: 36px;
+      user-select: none;
+    }
+
+    tr.beat-start td.row-num { color: #566880; }
+    tr.beat-start { border-top: 1px solid #1e2438; }
+    tr.playing { background: #0d1e10; }
+    tr.playing td.row-num { color: #5db87a; }
+
+    td.cell {
+      min-width: 148px;
+      padding: 2px 6px;
+      cursor: pointer;
+      white-space: nowrap;
+      border-left: 1px solid #111120;
+      transition: background 0.04s;
+    }
+    td.cell:hover   { background: #12121e; }
+    td.cell.selected { background: #0e1e32; outline: 1px solid #6ab8f0; outline-offset: -1px; }
+
+    .empty { color: #1e2e42; }
+    .note-name { color: #6ab8f0; min-width: 3ch; display: inline-block; }
+    .cell-vel  { color: #7aaa7a; margin-left: 6px; min-width: 2ch; display: inline-block; }
+    .cell-len  { color: #8888aa; margin-left: 6px; }
+
+    /* ── bottom bar ── */
+    .bottom-bar {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    #status {
+      margin-top: 8px;
+      font-size: 0.7rem;
+      color: #3a4a5e;
+      min-height: 1.2em;
+    }
+    #status .ok  { color: #5db87a; }
+    #status .err { color: #f06a6a; }
+  </style>
+</head>
+<body>
+  <h1>Tracker</h1>
+
+  <!-- Transport -->
+  <div class="bar">
+    <button id="play-btn">▶ Play</button>
+    <div class="ctrl">
+      <label>BPM</label>
+      <input type="number" id="bpm-in" value="160" min="40" max="300">
+    </div>
+    <div class="ctrl">
+      <label>Rows</label>
+      <input type="number" id="length-in" value="32" min="4" max="128">
+    </div>
+    <div class="ctrl">
+      <label>Steps/Beat</label>
+      <input type="number" id="tpb-in" value="4" min="1" max="16">
+    </div>
+    <div class="row-badge">row <span id="row-num">--</span></div>
+  </div>
+
+  <!-- Cell editor -->
+  <div class="bar" id="editor-bar">
+    <span class="placeholder" id="editor-placeholder">Select a cell to edit &nbsp;·&nbsp; keyboard: Z–M for notes, 1–8 for octave, Delete to clear, arrows to navigate</span>
+    <div id="editor-fields">
+      <div class="ctrl">
+        <label>Note</label>
+        <input type="text" id="ed-note" placeholder="C5" maxlength="4">
+      </div>
+      <div class="ctrl">
+        <label>Vel</label>
+        <input type="range" id="ed-vel" min="0" max="1" step="0.01" value="0.8">
+        <span class="val" id="ed-vel-val">0.80</span>
+      </div>
+      <div class="ctrl">
+        <label>Len</label>
+        <input type="number" id="ed-len" min="1" max="64" value="1">
+      </div>
+      <button id="ed-clear">Clear</button>
+    </div>
+  </div>
+
+  <!-- Key reference -->
+  <div class="key-guide">
+    <span class="hl">Z</span>=C &nbsp;
+    <span class="hl">S</span>=C# &nbsp;
+    <span class="hl">X</span>=D &nbsp;
+    <span class="hl">D</span>=D# &nbsp;
+    <span class="hl">C</span>=E &nbsp;
+    <span class="hl">V</span>=F &nbsp;
+    <span class="hl">G</span>=F# &nbsp;
+    <span class="hl">B</span>=G &nbsp;
+    <span class="hl">H</span>=G# &nbsp;
+    <span class="hl">N</span>=A &nbsp;
+    <span class="hl">J</span>=A# &nbsp;
+    <span class="hl">M</span>=B &nbsp;&nbsp;
+    <span class="hl">1–8</span> = octave &nbsp;&nbsp;
+    <span class="hl">Del</span> = clear &nbsp;&nbsp;
+    <span class="hl">↑↓←→</span> = navigate &nbsp;&nbsp;
+    <span class="hl">Space</span> = play/stop &nbsp;&nbsp;
+    octave: <span id="oct-display" class="hl">4</span>
+  </div>
+
+  <!-- Pattern grid -->
+  <div class="grid-wrap">
+    <table id="grid">
+      <thead id="grid-head"></thead>
+      <tbody id="grid-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Bottom controls -->
+  <div class="bottom-bar">
+    <button id="add-track-btn">+ Add Track</button>
+    <button id="export-btn">Export JSON</button>
+    <button id="copy-btn">Copy JSON</button>
+  </div>
+
+  <div id="status">Loading instruments…</div>
+
+  <script type="module">
+    import { AudioManager } from './engine/audio.js';
+    import { Sequencer }    from './engine/sequencer.js';
+
+    // ── constants ─────────────────────────────────────────────────────────────
+    const INST_URLS = [
+      'instruments/nes-pulse-25.json',
+      'instruments/nes-pulse-50.json',
+      'instruments/nes-triangle.json',
+      'instruments/nes-noise.json',
+      'instruments/fat-triangle.json',
+    ];
+    const INST_NAMES = ['Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Triangle'];
+
+    const NOTE_NAMES   = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const KEY_SEMITONE = { z:0,s:1,x:2,d:3,c:4,v:5,g:6,b:7,h:8,n:9,j:10,m:11 };
+
+    // ── audio setup ───────────────────────────────────────────────────────────
+    const audio = new AudioManager();
+    audio.createChannel('tracker', { volume: 0.85 });
+
+    let instruments = [];
+    try {
+      instruments = await Promise.all(
+        INST_URLS.map(u => audio.loadInstrument(u, { channel: 'tracker' }))
+      );
+      setStatus('<span class="ok">Ready.</span>');
+    } catch (e) {
+      setStatus(`<span class="err">Load error: ${e.message}</span>`);
+      throw e;
+    }
+
+    const seq = new Sequencer(audio.context);
+
+    // ── state ─────────────────────────────────────────────────────────────────
+    // cells[row] = null | { note, velocity, length }
+    function makeTrack(name, instIdx) {
+      return { name, instIdx, muted: false, cells: Array(128).fill(null) };
+    }
+
+    const tracks = [
+      makeTrack('Lead', 0),
+      makeTrack('Bass', 2),
+      makeTrack('Perc', 3),
+    ];
+
+    let patternLength = 32;
+    let ticksPerBeat  = 4;
+    let currentOctave = 4;
+    let selected      = null; // { t, r }
+    let audioReady    = false;
+
+    // ── pre-populate demo pattern ─────────────────────────────────────────────
+    const DEMO = {
+      lead: [
+        [0,72,0.85,2],[2,76,0.80,1],[3,79,0.75,1],[4,81,0.90,3],[7,79,0.75,1],
+        [8,76,0.80,2],[10,74,0.80,1],[11,72,0.75,1],[12,74,0.85,2],[14,67,0.80,2],
+        [16,72,0.85,2],[18,77,0.80,1],[19,79,0.75,1],[20,81,0.90,4],
+        [24,79,0.80,1],[25,76,0.75,1],[26,74,0.80,1],[27,72,0.75,1],[28,72,0.90,4],
+      ],
+      bass: [
+        [0,48,0.65,4],[4,57,0.65,4],[8,55,0.65,4],[12,48,0.65,4],
+        [16,53,0.65,4],[20,57,0.65,4],[24,55,0.65,4],[28,48,0.65,4],
+      ],
+      perc: [
+        [0,60,0.85,1],[8,60,0.85,1],[16,60,0.85,1],[24,60,0.85,1],
+        [4,60,0.60,1],[12,60,0.60,1],[20,60,0.60,1],[28,60,0.60,1],
+        [2,60,0.28,1],[6,60,0.28,1],[10,60,0.28,1],[14,60,0.28,1],
+        [18,60,0.28,1],[22,60,0.28,1],[26,60,0.28,1],[30,60,0.28,1],
+      ],
+    };
+    [DEMO.lead, DEMO.bass, DEMO.perc].forEach((evts, ti) => {
+      evts.forEach(([row, note, velocity, length]) => {
+        tracks[ti].cells[row] = { note, velocity, length };
+      });
+    });
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+    function midiToName(n) {
+      return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+    }
+
+    function nameToMidi(s) {
+      const m = s.trim().match(/^([A-Ga-g])(#|b)?(\d)$/);
+      if (!m) return null;
+      const base = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
+      let n = base[m[1].toUpperCase()];
+      if (m[2] === '#') n++;
+      else if (m[2] === 'b') n--;
+      return 12 * (parseInt(m[3]) + 1) + n;
+    }
+
+    function cellHTML(cell) {
+      if (!cell) return '<span class="empty">· · ·</span>';
+      const vel = Math.round(cell.velocity * 99).toString().padStart(2, '0');
+      return `<span class="note-name">${midiToName(cell.note).padEnd(3)}</span>`
+           + `<span class="cell-vel">${vel}</span>`
+           + `<span class="cell-len"> ${cell.length}</span>`;
+    }
+
+    function setStatus(html) {
+      document.getElementById('status').innerHTML = html;
+    }
+
+    function flashStatus(msg, ms = 1500) {
+      setStatus(msg);
+      setTimeout(() => setStatus(''), ms);
+    }
+
+    // ── grid rendering ────────────────────────────────────────────────────────
+    function buildGrid() {
+      // ── header ──
+      let hdr = '<tr><th class="row-num-h"></th>';
+      tracks.forEach((tr, t) => {
+        const opts = INST_NAMES.map((n, i) =>
+          `<option value="${i}"${i === tr.instIdx ? ' selected' : ''}>${n}</option>`
+        ).join('');
+        hdr += `<th class="track-header">
+          <div class="track-controls">
+            <select class="inst-sel" data-t="${t}">${opts}</select>
+            <button class="mute-btn${tr.muted ? ' muted' : ''}" data-t="${t}">M</button>
+            <button class="del-track-btn" data-t="${t}">×</button>
+          </div>
+        </th>`;
+      });
+      hdr += '<th class="add-col"></th></tr>';
+      document.getElementById('grid-head').innerHTML = hdr;
+
+      // ── body ──
+      let body = '';
+      for (let r = 0; r < patternLength; r++) {
+        const beat = r % ticksPerBeat === 0 ? ' beat-start' : '';
+        const rowLabel = r.toString().padStart(2, '0');
+        body += `<tr class="row${beat}" data-r="${r}">`;
+        body += `<td class="row-num">${rowLabel}</td>`;
+        tracks.forEach((tr, t) => {
+          const sel = selected?.t === t && selected?.r === r ? ' selected' : '';
+          body += `<td class="cell${sel}" data-t="${t}" data-r="${r}">${cellHTML(tr.cells[r])}</td>`;
+        });
+        body += '</tr>';
+      }
+      document.getElementById('grid-body').innerHTML = body;
+    }
+
+    function updateCellEl(t, r) {
+      const td = document.querySelector(`#grid-body td.cell[data-t="${t}"][data-r="${r}"]`);
+      if (!td) return;
+      td.innerHTML = cellHTML(tracks[t].cells[r]);
+      td.className = `cell${selected?.t === t && selected?.r === r ? ' selected' : ''}`;
+    }
+
+    function refreshSelection(prev) {
+      if (prev) updateCellEl(prev.t, prev.r);
+      if (selected) updateCellEl(selected.t, selected.r);
+    }
+
+    // ── selection & editor ────────────────────────────────────────────────────
+    function selectCell(t, r) {
+      t = Math.max(0, Math.min(tracks.length - 1, t));
+      r = Math.max(0, Math.min(patternLength - 1, r));
+      const prev = selected;
+      selected = { t, r };
+      refreshSelection(prev);
+      updateEditor();
+      scrollCellIntoView(t, r);
+    }
+
+    function scrollCellIntoView(t, r) {
+      const td = document.querySelector(`#grid-body td.cell[data-t="${t}"][data-r="${r}"]`);
+      td?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
+    function updateEditor() {
+      const ph  = document.getElementById('editor-placeholder');
+      const fld = document.getElementById('editor-fields');
+      if (!selected) {
+        ph.style.display = '';
+        fld.classList.remove('visible');
+        return;
+      }
+      ph.style.display = 'none';
+      fld.classList.add('visible');
+      const cell = tracks[selected.t].cells[selected.r];
+      const noteIn = document.getElementById('ed-note');
+      const velIn  = document.getElementById('ed-vel');
+      const lenIn  = document.getElementById('ed-len');
+      noteIn.value = cell ? midiToName(cell.note) : '';
+      velIn.value  = cell ? cell.velocity : 0.8;
+      document.getElementById('ed-vel-val').textContent = (cell?.velocity ?? 0.8).toFixed(2);
+      lenIn.value  = cell ? cell.length : 1;
+    }
+
+    function setCell(t, r, cell) {
+      tracks[t].cells[r] = cell;
+      updateCellEl(t, r);
+      if (selected?.t === t && selected?.r === r) updateEditor();
+    }
+
+    function clearCell(t, r) {
+      setCell(t, r, null);
+    }
+
+    // ── keyboard input ────────────────────────────────────────────────────────
+    document.addEventListener('keydown', async e => {
+      // Don't hijack input fields (except note entry already handled in its own listener)
+      if (e.target !== document.body && e.target.tagName !== 'TD' &&
+          e.target.id !== 'ed-note' && !e.target.classList.contains('cell')) {
+        return;
+      }
+      if (e.target.id === 'ed-note') return; // handled separately
+
+      if (e.key === ' ') {
+        e.preventDefault();
+        document.getElementById('play-btn').click();
+        return;
+      }
+
+      if (!selected) return;
+      const { t, r } = selected;
+
+      if (e.key === 'ArrowDown')  { e.preventDefault(); selectCell(t, r + 1); return; }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); selectCell(t, r - 1); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); selectCell(t + 1, r); return; }
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); selectCell(t - 1, r); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); clearCell(t, r); return; }
+
+      if (e.key >= '1' && e.key <= '8') {
+        currentOctave = parseInt(e.key);
+        document.getElementById('oct-display').textContent = currentOctave;
+        return;
+      }
+
+      const semitone = KEY_SEMITONE[e.key.toLowerCase()];
+      if (semitone === undefined) return;
+      e.preventDefault();
+
+      await ensureAudio();
+      const note = 12 * (currentOctave + 1) + semitone;
+      const velocity = +document.getElementById('ed-vel').value || 0.8;
+      const length   = +document.getElementById('ed-len').value || 1;
+      setCell(t, r, { note, velocity, length });
+
+      // Preview the note
+      const inst = instruments[tracks[t].instIdx];
+      inst.noteOn(note, velocity);
+      setTimeout(() => inst.noteOff(note), Math.max(50, length * (60000 / seq.bpm / ticksPerBeat)));
+
+      // Advance to next row
+      selectCell(t, r + 1);
+    });
+
+    // ── editor bar controls ───────────────────────────────────────────────────
+    document.getElementById('ed-note').addEventListener('change', e => {
+      if (!selected) return;
+      const midi = nameToMidi(e.target.value);
+      if (midi == null) { e.target.style.borderColor = '#f06a6a'; return; }
+      e.target.style.borderColor = '';
+      const cell = tracks[selected.t].cells[selected.r] ?? { velocity: 0.8, length: 1 };
+      setCell(selected.t, selected.r, { ...cell, note: midi });
+    });
+
+    document.getElementById('ed-vel').addEventListener('input', e => {
+      const v = +e.target.value;
+      document.getElementById('ed-vel-val').textContent = v.toFixed(2);
+      if (!selected) return;
+      const cell = tracks[selected.t].cells[selected.r];
+      if (cell) setCell(selected.t, selected.r, { ...cell, velocity: v });
+    });
+
+    document.getElementById('ed-len').addEventListener('change', e => {
+      if (!selected) return;
+      const cell = tracks[selected.t].cells[selected.r];
+      if (cell) setCell(selected.t, selected.r, { ...cell, length: Math.max(1, +e.target.value) });
+    });
+
+    document.getElementById('ed-clear').addEventListener('click', () => {
+      if (selected) clearCell(selected.t, selected.r);
+    });
+
+    // ── grid click ────────────────────────────────────────────────────────────
+    document.getElementById('grid-body').addEventListener('click', async e => {
+      const td = e.target.closest('td.cell');
+      if (!td) return;
+      await ensureAudio();
+      selectCell(+td.dataset.t, +td.dataset.r);
+    });
+
+    // ── track header controls ─────────────────────────────────────────────────
+    document.getElementById('grid-head').addEventListener('change', e => {
+      if (e.target.classList.contains('inst-sel')) {
+        tracks[+e.target.dataset.t].instIdx = +e.target.value;
+      }
+    });
+
+    document.getElementById('grid-head').addEventListener('click', e => {
+      const t = e.target.dataset.t;
+      if (t == null) return;
+      if (e.target.classList.contains('mute-btn')) {
+        tracks[+t].muted = !tracks[+t].muted;
+        e.target.classList.toggle('muted', tracks[+t].muted);
+      }
+      if (e.target.classList.contains('del-track-btn')) {
+        if (tracks.length <= 1) return; // keep at least one
+        if (selected?.t === +t) selected = null;
+        tracks.splice(+t, 1);
+        buildGrid();
+        updateEditor();
+      }
+    });
+
+    // ── add track ─────────────────────────────────────────────────────────────
+    document.getElementById('add-track-btn').addEventListener('click', () => {
+      tracks.push(makeTrack(`Track ${tracks.length + 1}`, 0));
+      buildGrid();
+    });
+
+    // ── transport ─────────────────────────────────────────────────────────────
+    async function ensureAudio() {
+      if (!audioReady) {
+        await audio.resume();
+        audioReady = true;
+      }
+    }
+
+    document.getElementById('bpm-in').addEventListener('change', e => {
+      seq.bpm = Math.max(40, Math.min(300, +e.target.value));
+    });
+
+    document.getElementById('length-in').addEventListener('change', e => {
+      patternLength = Math.max(4, Math.min(128, +e.target.value));
+      buildGrid();
+    });
+
+    document.getElementById('tpb-in').addEventListener('change', e => {
+      ticksPerBeat = Math.max(1, Math.min(16, +e.target.value));
+      buildGrid();
+    });
+
+    const playBtn = document.getElementById('play-btn');
+    playBtn.addEventListener('click', async () => {
+      await ensureAudio();
+      if (seq.running) {
+        seq.stop();
+        playBtn.textContent = '▶ Play';
+        playBtn.classList.remove('playing');
+      } else {
+        seq.bpm = +document.getElementById('bpm-in').value;
+        seq.setPattern(buildSeqPattern());
+        seq.start();
+        playBtn.textContent = '■ Stop';
+        playBtn.classList.add('playing');
+      }
+    });
+
+    function buildSeqPattern() {
+      return {
+        ticksPerBeat,
+        length: patternLength,
+        tracks: tracks
+          .filter(tr => !tr.muted)
+          .map(tr => ({
+            id: tr.name,
+            instrument: instruments[tr.instIdx],
+            events: tr.cells
+              .slice(0, patternLength)
+              .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
+              .filter(Boolean),
+          })),
+      };
+    }
+
+    // ── row counter ───────────────────────────────────────────────────────────
+    const rowNum = document.getElementById('row-num');
+    let lastPlayingRow = -1;
+    (function tick() {
+      const cur = seq.running ? seq.currentRow : -1;
+      rowNum.textContent = cur >= 0 ? cur : '--';
+      if (cur !== lastPlayingRow) {
+        if (lastPlayingRow >= 0) {
+          document.querySelector(`#grid-body tr[data-r="${lastPlayingRow}"]`)
+            ?.classList.remove('playing');
+        }
+        if (cur >= 0) {
+          document.querySelector(`#grid-body tr[data-r="${cur}"]`)
+            ?.classList.add('playing');
+        }
+        lastPlayingRow = cur;
+      }
+      requestAnimationFrame(tick);
+    })();
+
+    // ── export ────────────────────────────────────────────────────────────────
+    function buildExportJSON() {
+      return JSON.stringify({
+        ticksPerBeat,
+        length: patternLength,
+        tracks: tracks.map(tr => ({
+          id: tr.name.toLowerCase().replace(/\s+/g, '-'),
+          name: tr.name,
+          instrumentUrl: INST_URLS[tr.instIdx],
+          events: tr.cells
+            .slice(0, patternLength)
+            .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
+            .filter(Boolean),
+        })),
+      }, null, 2);
+    }
+
+    document.getElementById('export-btn').addEventListener('click', () => {
+      const json = buildExportJSON();
+      const a = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(new Blob([json], { type: 'application/json' })),
+        download: 'pattern.json',
+      });
+      a.click();
+      URL.revokeObjectURL(a.href);
+      flashStatus('<span class="ok">pattern.json downloaded.</span>');
+    });
+
+    document.getElementById('copy-btn').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(buildExportJSON());
+        flashStatus('<span class="ok">Copied to clipboard.</span>');
+      } catch {
+        flashStatus('<span class="err">Clipboard unavailable — use Export instead.</span>');
+      }
+    });
+
+    // ── init ──────────────────────────────────────────────────────────────────
+    seq.bpm = 160;
+    buildGrid();
+  </script>
+</body>
+</html>

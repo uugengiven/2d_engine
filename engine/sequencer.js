@@ -144,12 +144,14 @@ export class Sequencer {
                 // noteOn at the exact scheduled audio time
                 track.instrument.noteOn(evt.note, evt.velocity ?? 0.8, time);
 
-                // Store noteOff for later dispatch
+                // Store noteOff for later dispatch, tagged with this note's start
+                // time so stale noteOffs (after voice stealing) can be ignored.
                 const noteOffTime = time + (evt.length ?? 1) * rowDur - 0.005;
                 this.#pendingNoteOffs.push({
                     time: noteOffTime,
                     instrument: track.instrument,
                     note: evt.note,
+                    noteStartTime: time,
                 });
             }
         }
@@ -161,10 +163,10 @@ export class Sequencer {
     #flushNoteOffs() {
         const now = this.#ctx.currentTime + SCHEDULE_AHEAD;
         while (this.#pendingNoteOffs.length > 0 && this.#pendingNoteOffs[0].time <= now) {
-            const { time, instrument, note } = this.#pendingNoteOffs.shift();
+            const { time, instrument, note, noteStartTime } = this.#pendingNoteOffs.shift();
             // Delay the JS call so it fires close to the actual audio time
             const delayMs = Math.max(0, (time - this.#ctx.currentTime) * 1000);
-            setTimeout(() => instrument.noteOff(note), delayMs);
+            setTimeout(() => instrument.noteOff(note, noteStartTime), delayMs);
         }
     }
 }

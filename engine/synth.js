@@ -45,6 +45,7 @@ export class OscSynth {
     #voices = [];
     #waveCache = new Map();
     #noiseBuffer = null;
+    #seq = 0; // monotonic counter — used for oldest-steal ordering, independent of audio clock
 
     /**
      * @param {AudioContext} ctx
@@ -64,6 +65,7 @@ export class OscSynth {
                 note: -1,
                 velocity: 0,
                 noteStartTime: 0,
+                noteSeq: 0,      // allocation order for oldest-steal
                 gainNode: null,
                 sources: [],     // OscillatorNode / BufferSourceNode
                 nodes: [],       // all nodes for disconnect
@@ -75,6 +77,11 @@ export class OscSynth {
 
     get name() { return this.#def.name ?? 'Unnamed'; }
     get voiceCount() { return this.#voices.length; }
+
+    /** Read-only snapshot of the voice pool — useful for debugging and tests. */
+    get voiceStates() {
+        return this.#voices.map(v => ({ state: v.state, note: v.note, startTime: v.noteStartTime }));
+    }
 
     // ─── public API ──────────────────────────────────────────────────────────
 
@@ -98,10 +105,16 @@ export class OscSynth {
     /**
      * Release a held note.
      * @param {number} midiNote
+     * @param {number|null} [noteStartedAt]  AudioContext time the note was triggered.
+     *   When provided, the release is skipped if the current voice for this note was
+     *   started *after* this timestamp — meaning the voice was already stolen and
+     *   rebuilt for a newer note, so this noteOff is stale.
      */
-    noteOff(midiNote) {
+    noteOff(midiNote, noteStartedAt = null) {
         const voice = this.#voices.find(v => v.note === midiNote && v.state === 'playing');
-        if (voice) this.#releaseVoice(voice, null);
+        if (!voice) return;
+        if (noteStartedAt != null && voice.noteStartTime > noteStartedAt + 0.020) return;
+        this.#releaseVoice(voice, null);
     }
 
     /** Release all currently playing voices immediately. */
@@ -124,7 +137,7 @@ export class OscSynth {
         if (policy === 'none') return null;
 
         // oldest: lowest noteStartTime
-        const victim = this.#voices.reduce((a, b) => a.noteStartTime < b.noteStartTime ? a : b);
+        const victim = this.#voices.reduce((a, b) => a.noteSeq < b.noteSeq ? a : b);
         this.#killVoice(victim);
         return victim;
     }
@@ -152,6 +165,7 @@ export class OscSynth {
         voice.note = midiNote;
         voice.velocity = velocity;
         voice.noteStartTime = when;
+        voice.noteSeq = ++this.#seq;
         voice.nodes = [];
         voice.sources = [];
 
