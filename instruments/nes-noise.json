@@ -1,0 +1,29 @@
+{
+  "type": "osc",
+  "name": "NES Noise",
+  "version": "1.0",
+
+  "voices": 2,
+  "stealPolicy": "oldest",
+  "portamento": 0,
+  "pitchBendRange": 2,
+  "volume": 0.7,
+
+  "oscillators": [
+    {
+      "waveform": "noise",
+      "noiseType": "lfsr",
+      "level": 1.0
+    }
+  ],
+
+  "envelope": {
+    "attack":  0.001,
+    "decay":   0.12,
+    "sustain": 0.0,
+    "decay2":  0.0,
+    "release": 0.02
+  },
+
+  "lfos": []
+}

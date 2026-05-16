@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OscSynth Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #090912;
+      color: #c0cce0;
+      font-family: 'Courier New', monospace;
+      padding: 28px 24px;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      color: #6ab8f0;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+
+    .ctrl {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .ctrl label {
+      font-size: 0.68rem;
+      color: #566880;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    select {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #c0cce0;
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 5px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    select:focus { outline: none; border-color: #6ab8f0; }
+
+    input[type=range] {
+      width: 110px;
+      cursor: pointer;
+      accent-color: #6ab8f0;
+    }
+
+    .val {
+      font-size: 0.8rem;
+      color: #6ab8f0;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    button {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #6ab8f0;
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 6px 16px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    button:hover    { background: #1a1e38; border-color: #6ab8f0; }
+    button.playing  { border-color: #f06a6a; color: #f06a6a; }
+
+    .row-badge {
+      font-size: 0.75rem;
+      color: #3a4a5e;
+      min-width: 70px;
+    }
+    .row-badge span { color: #6ab8f0; }
+
+    /* ── keyboard ── */
+    .kb-label {
+      font-size: 0.65rem;
+      color: #3a4a5e;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    .kb-wrap {
+      overflow-x: auto;
+      padding-bottom: 12px;
+    }
+
+    #keyboard {
+      position: relative;
+      display: inline-block;
+      user-select: none;
+    }
+
+    .key {
+      position: absolute;
+      border-radius: 0 0 4px 4px;
+      cursor: pointer;
+      transition: background 0.04s;
+    }
+    .white-key {
+      background: #d0d8e4;
+      border: 1px solid #3a4a5e;
+      z-index: 0;
+    }
+    .white-key:hover { background: #e2eaf5; }
+    .white-key.pressed { background: #6ab8f0; }
+
+    .black-key {
+      background: #161828;
+      border: 1px solid #090912;
+      z-index: 1;
+    }
+    .black-key:hover { background: #252845; }
+    .black-key.pressed { background: #3a7aaa; }
+
+    /* ── status ── */
+    #status {
+      margin-top: 22px;
+      font-size: 0.72rem;
+      color: #3a4a5e;
+    }
+    #status .ok  { color: #5db87a; }
+    #status .err { color: #f06a6a; }
+
+    /* ── soundboard ── */
+    .soundboard {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+    .sfx-btn {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #c0cce0;
+      font-family: inherit;
+      font-size: 0.78rem;
+      padding: 7px 16px;
+      border-radius: 3px;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: background 0.08s, border-color 0.08s, color 0.08s;
+    }
+    .sfx-btn:hover  { background: #1a1e38; border-color: #a0c8f0; color: #a0c8f0; }
+    .sfx-btn:active { background: #253050; }
+  </style>
+</head>
+<body>
+  <h1>OscSynth</h1>
+
+  <div class="controls">
+    <div class="ctrl">
+      <label>Instrument</label>
+      <select id="inst-sel">
+        <option value="0">Pulse 25%</option>
+        <option value="1">Pulse 50%</option>
+        <option value="2">Triangle</option>
+        <option value="3">Noise</option>
+        <option value="4">Fat Triangle</option>
+      </select>
+    </div>
+
+    <div class="ctrl">
+      <label>Volume</label>
+      <input type="range" id="vol" min="0" max="1" step="0.01" value="0.75">
+      <span class="val" id="vol-val">0.75</span>
+    </div>
+
+    <div class="ctrl">
+      <label>BPM</label>
+      <input type="range" id="bpm" min="60" max="240" step="1" value="160">
+      <span class="val" id="bpm-val">160</span>
+    </div>
+
+    <button id="play-btn">▶ Play</button>
+
+    <div class="row-badge">row <span id="row-num">--</span></div>
+  </div>
+
+  <div class="kb-label">Soundboard</div>
+  <div class="soundboard">
+    <button class="sfx-btn" data-sfx="jump">Jump</button>
+    <button class="sfx-btn" data-sfx="coin">Coin</button>
+    <button class="sfx-btn" data-sfx="powerup">Power Up</button>
+    <button class="sfx-btn" data-sfx="shoot">Shoot</button>
+    <button class="sfx-btn" data-sfx="select">Select</button>
+    <button class="sfx-btn" data-sfx="hit">Hit</button>
+  </div>
+
+  <div class="kb-label">Keyboard &nbsp;·&nbsp; C4 – C7</div>
+  <div class="kb-wrap">
+    <div id="keyboard"></div>
+  </div>
+
+  <div id="status">Loading instruments…</div>
+
+  <script type="module">
+    import { AudioManager } from './engine/audio.js';
+    import { Sequencer }    from './engine/sequencer.js';
+
+    // ── audio setup ──────────────────────────────────────────────────────────
+    const audio = new AudioManager();
+    audio.createChannel('synth', { volume: 0.9 });
+
+    let instruments = [];
+    try {
+      instruments = await Promise.all([
+        'instruments/nes-pulse-25.json',
+        'instruments/nes-pulse-50.json',
+        'instruments/nes-triangle.json',
+        'instruments/nes-noise.json',
+        'instruments/fat-triangle.json',
+      ].map(u => audio.loadInstrument(u, { channel: 'synth' })));
+
+      document.getElementById('status').innerHTML =
+        '<span class="ok">Instruments loaded.</span> Click a key or press Play.';
+    } catch (e) {
+      document.getElementById('status').innerHTML =
+        `<span class="err">Load error: ${e.message}</span>`;
+      throw e;
+    }
+
+    const [pulse25, pulse50, triangle, noise, fatTriangle] = instruments;
+    let activeInstrument = pulse25;
+
+    // Dedicated SFX pools — separate voice allocations so SFX never steal from
+    // the keyboard or sequencer instruments.
+    const [sfxPulse, sfxNoise] = await Promise.all([
+      audio.loadInstrument('instruments/nes-pulse-25.json', { channel: 'synth', voices: 6 }),
+      audio.loadInstrument('instruments/nes-noise.json',   { channel: 'synth', voices: 4 }),
+    ]);
+
+    // ── sequencer & demo pattern ──────────────────────────────────────────────
+    const seq = new Sequencer(audio.context);
+    seq.bpm = 160;
+
+    seq.setPattern({
+      ticksPerBeat: 4,
+      length: 32,
+      tracks: [
+        {
+          id: 'lead',
+          instrument: pulse25,
+          events: [
+            { row:  0, note: 72, velocity: 0.85, length: 2 },  // C5
+            { row:  2, note: 76, velocity: 0.80, length: 1 },  // E5
+            { row:  3, note: 79, velocity: 0.75, length: 1 },  // G5
+            { row:  4, note: 81, velocity: 0.90, length: 3 },  // A5
+            { row:  7, note: 79, velocity: 0.75, length: 1 },  // G5
+            { row:  8, note: 76, velocity: 0.80, length: 2 },  // E5
+            { row: 10, note: 74, velocity: 0.80, length: 1 },  // D5
+            { row: 11, note: 72, velocity: 0.75, length: 1 },  // C5
+            { row: 12, note: 74, velocity: 0.85, length: 2 },  // D5
+            { row: 14, note: 67, velocity: 0.80, length: 2 },  // G4
+
+            { row: 16, note: 72, velocity: 0.85, length: 2 },  // C5
+            { row: 18, note: 77, velocity: 0.80, length: 1 },  // F5
+            { row: 19, note: 79, velocity: 0.75, length: 1 },  // G5
+            { row: 20, note: 81, velocity: 0.90, length: 4 },  // A5
+            { row: 24, note: 79, velocity: 0.80, length: 1 },  // G5
+            { row: 25, note: 76, velocity: 0.75, length: 1 },  // E5
+            { row: 26, note: 74, velocity: 0.80, length: 1 },  // D5
+            { row: 27, note: 72, velocity: 0.75, length: 1 },  // C5
+            { row: 28, note: 72, velocity: 0.90, length: 4 },  // C5 held
+          ],
+        },
+        {
+          id: 'bass',
+          instrument: triangle,
+          events: [
+            { row:  0, note: 48, velocity: 0.65, length: 4 },  // C3
+            { row:  4, note: 57, velocity: 0.65, length: 4 },  // A3
+            { row:  8, note: 55, velocity: 0.65, length: 4 },  // G3
+            { row: 12, note: 48, velocity: 0.65, length: 4 },  // C3
+            { row: 16, note: 53, velocity: 0.65, length: 4 },  // F3
+            { row: 20, note: 57, velocity: 0.65, length: 4 },  // A3
+            { row: 24, note: 55, velocity: 0.65, length: 4 },  // G3
+            { row: 28, note: 48, velocity: 0.65, length: 4 },  // C3
+          ],
+        },
+        {
+          id: 'perc',
+          instrument: noise,
+          events: [
+            // kicks
+            { row:  0, note: 60, velocity: 0.85, length: 1 },
+            { row:  8, note: 60, velocity: 0.85, length: 1 },
+            { row: 16, note: 60, velocity: 0.85, length: 1 },
+            { row: 24, note: 60, velocity: 0.85, length: 1 },
+            // snares
+            { row:  4, note: 60, velocity: 0.60, length: 1 },
+            { row: 12, note: 60, velocity: 0.60, length: 1 },
+            { row: 20, note: 60, velocity: 0.60, length: 1 },
+            { row: 28, note: 60, velocity: 0.60, length: 1 },
+            // hi-hats
+            { row:  2, note: 60, velocity: 0.28, length: 1 },
+            { row:  6, note: 60, velocity: 0.28, length: 1 },
+            { row: 10, note: 60, velocity: 0.28, length: 1 },
+            { row: 14, note: 60, velocity: 0.28, length: 1 },
+            { row: 18, note: 60, velocity: 0.28, length: 1 },
+            { row: 22, note: 60, velocity: 0.28, length: 1 },
+            { row: 26, note: 60, velocity: 0.28, length: 1 },
+            { row: 30, note: 60, velocity: 0.28, length: 1 },
+          ],
+        },
+      ],
+    });
+
+    // ── controls ──────────────────────────────────────────────────────────────
+    let audioReady = false;
+    async function ensureAudio() {
+      if (!audioReady) {
+        await audio.resume();
+        audioReady = true;
+      }
+    }
+
+    document.getElementById('inst-sel').addEventListener('change', e => {
+      activeInstrument = instruments[+e.target.value];
+    });
+
+    const volSlider = document.getElementById('vol');
+    const volVal    = document.getElementById('vol-val');
+    volSlider.addEventListener('input', () => {
+      audio.volume = +volSlider.value;
+      volVal.textContent = (+volSlider.value).toFixed(2);
+    });
+    audio.volume = +volSlider.value;
+
+    const bpmSlider = document.getElementById('bpm');
+    const bpmVal    = document.getElementById('bpm-val');
+    bpmSlider.addEventListener('input', () => {
+      seq.bpm = +bpmSlider.value;
+      bpmVal.textContent = bpmSlider.value;
+    });
+
+    const playBtn = document.getElementById('play-btn');
+    playBtn.addEventListener('click', async () => {
+      await ensureAudio();
+      if (seq.running) {
+        seq.stop();
+        playBtn.textContent = '▶ Play';
+        playBtn.classList.remove('playing');
+      } else {
+        seq.start();
+        playBtn.textContent = '■ Stop';
+        playBtn.classList.add('playing');
+      }
+    });
+
+    // ── row counter ───────────────────────────────────────────────────────────
+    const rowNum = document.getElementById('row-num');
+    (function tick() {
+      rowNum.textContent = seq.running ? seq.currentRow : '--';
+      requestAnimationFrame(tick);
+    })();
+
+    // ── soundboard ───────────────────────────────────────────────────────────
+    // Each step: { at: seconds, note: midi, vel: 0-1, dur: seconds }
+    // Use distinct note numbers within each sequence — reusing the same note
+    // would trigger the "release previous" logic in noteOn.
+    const SFX = {
+      jump: {
+        inst: sfxPulse,
+        steps: [
+          { at: 0.000, note: 64, vel: 0.85, dur: 0.04 },  // E4
+          { at: 0.035, note: 67, vel: 0.85, dur: 0.04 },  // G4
+          { at: 0.070, note: 71, vel: 0.85, dur: 0.04 },  // B4
+          { at: 0.105, note: 76, vel: 0.85, dur: 0.10 },  // E5
+        ],
+      },
+      coin: {
+        inst: sfxPulse,
+        steps: [
+          { at: 0.000, note: 83, vel: 0.90, dur: 0.07 },  // B5
+          { at: 0.065, note: 88, vel: 0.90, dur: 0.18 },  // E6
+        ],
+      },
+      powerup: {
+        inst: sfxPulse,
+        steps: [
+          { at: 0.000, note: 72, vel: 0.85, dur: 0.08 },  // C5
+          { at: 0.075, note: 76, vel: 0.85, dur: 0.08 },  // E5
+          { at: 0.150, note: 79, vel: 0.85, dur: 0.08 },  // G5
+          { at: 0.225, note: 84, vel: 0.85, dur: 0.08 },  // C6
+          { at: 0.300, note: 91, vel: 0.90, dur: 0.22 },  // G6
+        ],
+      },
+      shoot: {
+        inst: sfxPulse,
+        steps: [
+          { at: 0.000, note: 84, vel: 0.80, dur: 0.03 },  // C6
+          { at: 0.025, note: 81, vel: 0.80, dur: 0.03 },  // A5
+          { at: 0.050, note: 77, vel: 0.75, dur: 0.03 },  // F5
+          { at: 0.075, note: 72, vel: 0.65, dur: 0.06 },  // C5
+        ],
+      },
+      select: {
+        inst: sfxPulse,
+        steps: [
+          { at: 0.000, note: 77, vel: 0.80, dur: 0.05 },  // F5
+          { at: 0.050, note: 84, vel: 0.90, dur: 0.10 },  // C6
+        ],
+      },
+      hit: {
+        inst: sfxNoise,
+        // Different note numbers prevent voice-steal cancelling the burst sequence
+        steps: [
+          { at: 0.000, note: 60, vel: 0.90, dur: 0.05 },
+          { at: 0.055, note: 61, vel: 0.60, dur: 0.05 },
+          { at: 0.110, note: 62, vel: 0.35, dur: 0.05 },
+        ],
+      },
+    };
+
+    function playSfx({ inst, steps }) {
+      const now = audio.context.currentTime;
+      for (const { at, note, vel = 0.8, dur } of steps) {
+        inst.noteOn(note, vel, now + at);
+        setTimeout(() => inst.noteOff(note), (at + dur) * 1000);
+      }
+    }
+
+    document.querySelector('.soundboard').addEventListener('click', async e => {
+      const btn = e.target.closest('.sfx-btn');
+      if (!btn) return;
+      await ensureAudio();
+      const sfx = SFX[btn.dataset.sfx];
+      if (sfx) playSfx(sfx);
+    });
+
+    // ── keyboard ──────────────────────────────────────────────────────────────
+    const IS_BLACK = [false, true, false, true, false, false, true, false, true, false, true, false];
+    const WHITE_W  = 34;
+    const WHITE_H  = 122;
+    const BLACK_W  = 22;
+    const BLACK_H  = 76;
+    const START    = 60;  // C4
+    const END      = 96;  // C7
+
+    const kbEl = document.getElementById('keyboard');
+
+    // Map note → white-key x position
+    const whiteX = new Map();
+    let wx = 0;
+    for (let n = START; n <= END; n++) {
+      if (!IS_BLACK[n % 12]) { whiteX.set(n, wx); wx += WHITE_W; }
+    }
+
+    kbEl.style.width  = wx + 'px';
+    kbEl.style.height = WHITE_H + 'px';
+
+    function makeKey(note, x, w, h, cls) {
+      const el = document.createElement('div');
+      el.className = `key ${cls}`;
+      el.dataset.note = note;
+      el.style.cssText = `left:${x}px; width:${w}px; height:${h}px;`;
+      return el;
+    }
+
+    // White keys first, then black on top
+    for (const [n, x] of whiteX) kbEl.appendChild(makeKey(n, x, WHITE_W, WHITE_H, 'white-key'));
+
+    for (let n = START; n <= END; n++) {
+      if (!IS_BLACK[n % 12]) continue;
+      const px = whiteX.get(n - 1);
+      if (px == null) continue;
+      const x = px + WHITE_W - Math.floor(BLACK_W / 2);
+      kbEl.appendChild(makeKey(n, x, BLACK_W, BLACK_H, 'black-key'));
+    }
+
+    // ── key interaction ───────────────────────────────────────────────────────
+    const heldNotes = new Set();
+
+    function pressKey(note) {
+      if (heldNotes.has(note)) return;
+      heldNotes.add(note);
+      activeInstrument.noteOn(note, 0.8);
+      kbEl.querySelector(`[data-note="${note}"]`)?.classList.add('pressed');
+    }
+
+    function releaseKey(note) {
+      if (!heldNotes.has(note)) return;
+      heldNotes.delete(note);
+      activeInstrument.noteOff(note);
+      kbEl.querySelector(`[data-note="${note}"]`)?.classList.remove('pressed');
+    }
+
+    kbEl.addEventListener('mousedown', async e => {
+      const key = e.target.closest('.key');
+      if (!key) return;
+      e.preventDefault();
+      await ensureAudio();
+      pressKey(+key.dataset.note);
+    });
+
+    kbEl.addEventListener('mousemove', e => {
+      if (e.buttons !== 1) return;
+      const key = e.target.closest('.key');
+      if (!key) return;
+      // Release any held key not under cursor, press new one
+      const note = +key.dataset.note;
+      for (const held of [...heldNotes]) {
+        if (held !== note) releaseKey(held);
+      }
+      pressKey(note);
+    });
+
+    window.addEventListener('mouseup', () => {
+      for (const note of [...heldNotes]) releaseKey(note);
+    });
+  </script>
+</body>
+</html>

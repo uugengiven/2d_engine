@@ -1,3 +1,5 @@
+import { OscSynth } from './synth.js';
+
 function generateIR(context, duration = 2.0, decay = 2.0) {
     const length = Math.ceil(context.sampleRate * duration);
     const ir = context.createBuffer(2, length, context.sampleRate);
@@ -329,6 +331,26 @@ export class AudioManager {
     }
 
     /**
+     * Load an instrument definition from a JSON file and return a ready-to-play OscSynth.
+     * @param {string} url
+     * @param {{ channel?: string, voices?: number }} [options]
+     * @returns {Promise<OscSynth>}
+     *
+     * @example
+     * const lead = await audio.loadInstrument('instruments/nes-pulse-25.json', { channel: 'sfx' });
+     * lead.noteOn(60, 0.8);
+     */
+    async loadInstrument(url, options = {}) {
+        this.#ensureContext();
+        const response = await fetch(url);
+        const def = await response.json();
+        const ch = options.channel
+            ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
+            : this.#defaultChannel;
+        return new OscSynth(this.#context, ch, def, { voices: options.voices });
+    }
+
+    /**
      * Unlock audio after a user gesture. Call once from a click/keydown handler.
      * Sounds will auto-resume from suspension on play() as well, but calling this
      * explicitly avoids the first-play delay.
@@ -338,6 +360,12 @@ export class AudioManager {
         if (this.#context?.state === 'suspended') {
             await this.#context.resume();
         }
+    }
+
+    /** The underlying AudioContext. Initializes lazily; use after a user gesture. */
+    get context() {
+        this.#ensureContext();
+        return this.#context;
     }
 
     get volume() { return this.#masterGain?.gain.value ?? 1.0; }

@@ -1,0 +1,27 @@
+{
+  "type": "osc",
+  "name": "Fat Triangle",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "portamento": 0,
+  "pitchBendRange": 2,
+  "volume": 0.9,
+
+  "oscillators": [
+    { "waveform": "triangle", "detune":   0, "semitones": 0, "level": 0.60 },
+    { "waveform": "triangle", "detune":  12, "semitones": 0, "level": 0.45 },
+    { "waveform": "triangle", "detune": -12, "semitones": 0, "level": 0.45 }
+  ],
+
+  "envelope": {
+    "attack":  0.010,
+    "decay":   0.08,
+    "sustain": 0.82,
+    "decay2":  0.0,
+    "release": 0.10
+  },
+
+  "lfos": []
+}

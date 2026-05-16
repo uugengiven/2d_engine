@@ -1,0 +1,31 @@
+{
+  "type": "osc",
+  "name": "NES Pulse 50%",
+  "version": "1.0",
+
+  "voices": 3,
+  "stealPolicy": "oldest",
+  "portamento": 0,
+  "pitchBendRange": 2,
+  "volume": 1.0,
+
+  "oscillators": [
+    {
+      "waveform": "square",
+      "dutyCycle": 0.5,
+      "detune": 0,
+      "semitones": 0,
+      "level": 1.0
+    }
+  ],
+
+  "envelope": {
+    "attack":  0.002,
+    "decay":   0.05,
+    "sustain": 0.75,
+    "decay2":  0.0,
+    "release": 0.03
+  },
+
+  "lfos": []
+}
