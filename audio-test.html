@@ -110,6 +110,7 @@
     // ── setup ─────────────────────────────────────────────────────────────────
     const audio = new AudioManager();
     audio.createChannel('test', { volume: 0.7 });
+    await audio.loadSynthWorklet();
 
     // Pre-load instrument definitions (JSON only — we'll new OscSynth directly
     // in tests so each test gets a clean, isolated voice pool).

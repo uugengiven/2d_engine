@@ -275,6 +275,7 @@ export class AudioManager {
     /** @type {Channel|null} */ #defaultChannel = null;
     /** @type {DynamicsCompressorNode|null} */ #masterCompressor = null;
     /** @type {GainNode|null} */ #masterGain = null;
+    #workletLoaded = false;
 
     #ensureContext() {
         if (this.#context) return;
@@ -340,8 +341,23 @@ export class AudioManager {
      * const lead = await audio.loadInstrument('instruments/nes-pulse-25.json', { channel: 'sfx' });
      * lead.noteOn(60, 0.8);
      */
+    /**
+     * Register the synth AudioWorklet module. Called automatically by loadInstrument(),
+     * but can be called explicitly before constructing OscSynth instances directly.
+     * @param {string} [moduleUrl]  defaults to './engine/synth-worklet.js'
+     * @returns {Promise<void>}
+     */
+    async loadSynthWorklet(moduleUrl = './engine/synth-worklet.js') {
+        this.#ensureContext();
+        if (!this.#workletLoaded) {
+            await this.#context.audioWorklet.addModule(moduleUrl);
+            this.#workletLoaded = true;
+        }
+    }
+
     async loadInstrument(url, options = {}) {
         this.#ensureContext();
+        await this.loadSynthWorklet();
         const response = await fetch(url);
         const def = await response.json();
         const ch = options.channel
