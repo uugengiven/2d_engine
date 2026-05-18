@@ -120,6 +120,16 @@ export class OscSynth {
         this.#releaseVoice(voice, null);
     }
 
+    /**
+     * Permanently disconnect this instrument. Call when removing a track or
+     * switching instruments — stops worklet processing and frees the audio graph node.
+     */
+    dispose() {
+        this.allNotesOff();
+        this.#post({ type: 'dispose' });
+        this.#workletNode.disconnect();
+    }
+
     /** Release all currently playing voices. */
     allNotesOff() {
         const now = this.#ctx.currentTime;

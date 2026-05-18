@@ -149,6 +149,13 @@
       gap: 4px;
     }
 
+    .voice-in {
+      width: 34px;
+      padding: 3px 4px;
+      text-align: center;
+      font-size: 0.72rem;
+    }
+
     .mute-btn {
       padding: 3px 7px;
       font-size: 0.7rem;
@@ -221,6 +228,80 @@
     }
     #status .ok  { color: #5db87a; }
     #status .err { color: #f06a6a; }
+
+    /* ── pattern tabs ── */
+    .pat-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .pat-tab {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #566880;
+      font-family: inherit;
+      font-size: 0.75rem;
+      padding: 4px 14px;
+      border-radius: 3px 3px 0 0;
+      cursor: pointer;
+      border-bottom-color: #1e2438;
+      transition: background 0.08s, color 0.08s;
+    }
+    .pat-tab:hover { background: #1a1e38; color: #c0cce0; }
+    .pat-tab.active { background: #0e0e1a; border-color: #6ab8f0; border-bottom-color: #090912; color: #6ab8f0; }
+    .pat-tab.add-pat { color: #2a3a50; border-style: dashed; }
+    .pat-tab.add-pat:hover { color: #6ab8f0; border-color: #6ab8f0; border-style: dashed; }
+
+    /* ── song arrangement ── */
+    .song-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 10px 0;
+      padding: 8px 12px;
+      background: #0e0e1a;
+      border: 1px solid #1e2438;
+      border-radius: 4px;
+      flex-wrap: wrap;
+    }
+    .bar-label {
+      font-size: 0.65rem;
+      color: #3a4a5e;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      white-space: nowrap;
+    }
+    .song-slots {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      flex: 1;
+      min-height: 26px;
+      align-items: center;
+    }
+    .song-slot {
+      position: relative;
+      background: #111120;
+      border: 1px solid #253050;
+      color: #8898b0;
+      font-size: 0.72rem;
+      padding: 3px 22px 3px 8px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+    .song-slot.playing { border-color: #6ab8f0; color: #6ab8f0; background: #0e1e32; }
+    .song-slot-x {
+      position: absolute;
+      right: 3px; top: 50%;
+      transform: translateY(-50%);
+      background: none; border: none;
+      color: #3a4a5e; font-size: 0.78rem;
+      cursor: pointer; padding: 0 2px; line-height: 1;
+    }
+    .song-slot-x:hover { color: #f06a6a; }
+    .song-empty { font-size: 0.7rem; color: #2a3a50; }
   </style>
 </head>
 <body>
@@ -235,7 +316,7 @@
     </div>
     <div class="ctrl">
       <label>Rows</label>
-      <input type="number" id="length-in" value="32" min="4" max="128">
+      <input type="number" id="length-in" value="32" min="4" max="512">
     </div>
     <div class="ctrl">
       <label>Steps/Beat</label>
@@ -243,6 +324,9 @@
     </div>
     <div class="row-badge">row <span id="row-num">--</span></div>
   </div>
+
+  <!-- Pattern tabs -->
+  <div class="pat-bar" id="pattern-tabs"></div>
 
   <!-- Cell editor -->
   <div class="bar" id="editor-bar">
@@ -294,18 +378,30 @@
     </table>
   </div>
 
+  <!-- Song arrangement -->
+  <div class="song-bar">
+    <span class="bar-label">Song</span>
+    <div id="song-slots" class="song-slots"></div>
+    <button id="song-add-btn" title="Append current pattern to song">+ Add</button>
+    <button id="play-song-btn">▶ Song</button>
+  </div>
+
   <!-- Bottom controls -->
   <div class="bottom-bar">
+    <button id="new-btn">New</button>
     <button id="add-track-btn">+ Add Track</button>
+    <button id="import-midi-btn">Import MIDI</button>
     <button id="export-btn">Export JSON</button>
     <button id="copy-btn">Copy JSON</button>
   </div>
+  <input type="file" id="midi-file-input" accept=".mid,.midi" style="display:none">
 
   <div id="status">Loading instruments…</div>
 
   <script type="module">
     import { AudioManager } from './engine/audio.js';
     import { Sequencer }    from './engine/sequencer.js';
+    import { parseMidi }    from './engine/midi-import.js';
 
     // ── constants ─────────────────────────────────────────────────────────────
     const INST_URLS = [
@@ -323,24 +419,40 @@
     // ── audio setup ───────────────────────────────────────────────────────────
     const audio = new AudioManager();
     audio.createChannel('tracker', { volume: 0.85 });
+    await audio.loadSynthWorklet();
 
-    let instruments = [];
+    // Load raw JSON definitions — each track creates its own OscSynth instance
+    // from these so multiple tracks using the same instrument never share a voice pool.
+    let instrumentDefs = [];
     try {
-      instruments = await Promise.all(
-        INST_URLS.map(u => audio.loadInstrument(u, { channel: 'tracker' }))
-      );
+      instrumentDefs = await Promise.all(INST_URLS.map(u => fetch(u).then(r => r.json())));
       setStatus('<span class="ok">Ready.</span>');
     } catch (e) {
       setStatus(`<span class="err">Load error: ${e.message}</span>`);
       throw e;
     }
 
+    function createTrackInst(instIdx, voiceOverride = null) {
+      const def = instrumentDefs[instIdx] ?? instrumentDefs[0];
+      const vc  = voiceOverride ?? def.voices ?? 4;
+      return new OscSynth(audio.context, audio.getChannel('tracker'), def, { voices: vc });
+    }
+
     const seq = new Sequencer(audio.context);
 
     // ── state ─────────────────────────────────────────────────────────────────
     // cells[row] = null | { note, velocity, length }
-    function makeTrack(name, instIdx) {
-      return { name, instIdx, muted: false, cells: Array(128).fill(null) };
+    function makeTrack(name, instIdx, size = 512, voiceOverride = null) {
+      const def    = instrumentDefs[instIdx] ?? instrumentDefs[0];
+      const voices = voiceOverride ?? def.voices ?? 4;
+      return {
+        name,
+        instIdx,
+        voices,
+        muted: false,
+        inst:  createTrackInst(instIdx, voices),
+        cells: Array(size).fill(null),
+      };
     }
 
     const tracks = [
@@ -355,23 +467,91 @@
     let selected      = null; // { t, r }
     let audioReady    = false;
 
+    // ── pattern & song state ──────────────────────────────────────────────────
+    // Each pattern snapshot: { name, patternLength, tracks: cloned track array }
+    const patterns = [{ name: 'Pattern 1', patternLength: 32, tracks: [] }];
+    let currentPatternIdx = 0;
+
+    // Song arrangement: ordered list of pattern indices
+    const song = [];
+    let songMode    = false;
+    let songPlayPos = 0;
+
     // ── pre-populate demo pattern ─────────────────────────────────────────────
+    // "Canopy Run" — original NES-style composition in C major, I–vi–IV–V
+    // Lead: Pulse 25% | Bass: Triangle (root–fifth walking) | Perc: Noise
+    // 160 BPM, 16th-note resolution, 32 rows = 2 bars
     const DEMO = {
       lead: [
-        [0,72,0.85,2],[2,76,0.80,1],[3,79,0.75,1],[4,81,0.90,3],[7,79,0.75,1],
-        [8,76,0.80,2],[10,74,0.80,1],[11,72,0.75,1],[12,74,0.85,2],[14,67,0.80,2],
-        [16,72,0.85,2],[18,77,0.80,1],[19,79,0.75,1],[20,81,0.90,4],
-        [24,79,0.80,1],[25,76,0.75,1],[26,74,0.80,1],[27,72,0.75,1],[28,72,0.90,4],
+        // Bar 1 — C major (rows 0–7)
+        [ 0, 79, 0.90, 1],  // G5
+        [ 1, 76, 0.85, 1],  // E5
+        [ 2, 79, 0.90, 1],  // G5
+        [ 3, 81, 0.85, 1],  // A5
+        [ 4, 79, 0.90, 2],  // G5 (held)
+        [ 6, 76, 0.80, 2],  // E5 (held)
+        // Bar 1 — A minor (rows 8–15)
+        [ 8, 81, 0.90, 2],  // A5
+        [10, 84, 0.85, 2],  // C6  ← high point
+        [12, 81, 0.85, 1],  // A5
+        [13, 79, 0.80, 1],  // G5
+        [14, 77, 0.85, 2],  // F5
+        // Bar 2 — F major (rows 16–23)
+        [16, 77, 0.90, 1],  // F5
+        [17, 79, 0.85, 1],  // G5
+        [18, 81, 0.90, 2],  // A5
+        [20, 79, 0.85, 2],  // G5
+        [22, 77, 0.80, 1],  // F5
+        [23, 76, 0.80, 1],  // E5
+        // Bar 2 — G major → C resolution (rows 24–31)
+        [24, 74, 0.85, 1],  // D5
+        [25, 76, 0.85, 1],  // E5
+        [26, 79, 0.90, 2],  // G5
+        [28, 76, 0.85, 2],  // E5
+        [30, 72, 0.92, 2],  // C5  ← resolution
       ],
       bass: [
-        [0,48,0.65,4],[4,57,0.65,4],[8,55,0.65,4],[12,48,0.65,4],
-        [16,53,0.65,4],[20,57,0.65,4],[24,55,0.65,4],[28,48,0.65,4],
+        // C major — root/fifth walking
+        [ 0, 48, 0.70, 2],  // C3
+        [ 2, 55, 0.65, 2],  // G3
+        [ 4, 48, 0.70, 2],  // C3
+        [ 6, 52, 0.65, 2],  // E3
+        // A minor — root/fifth
+        [ 8, 57, 0.70, 2],  // A3
+        [10, 52, 0.65, 2],  // E3
+        [12, 57, 0.70, 2],  // A3
+        [14, 60, 0.65, 2],  // C4
+        // F major — root/fifth
+        [16, 53, 0.70, 2],  // F3
+        [18, 60, 0.65, 2],  // C4
+        [20, 53, 0.70, 2],  // F3
+        [22, 57, 0.65, 2],  // A3
+        // G major — root/fifth
+        [24, 55, 0.70, 2],  // G3
+        [26, 62, 0.65, 2],  // D4
+        [28, 55, 0.70, 2],  // G3
+        [30, 59, 0.65, 2],  // B3
       ],
       perc: [
-        [0,60,0.85,1],[8,60,0.85,1],[16,60,0.85,1],[24,60,0.85,1],
-        [4,60,0.60,1],[12,60,0.60,1],[20,60,0.60,1],[28,60,0.60,1],
-        [2,60,0.28,1],[6,60,0.28,1],[10,60,0.28,1],[14,60,0.28,1],
-        [18,60,0.28,1],[22,60,0.28,1],[26,60,0.28,1],[30,60,0.28,1],
+        // Kicks on beats 1 & 3
+        [ 0, 60, 0.85, 1],
+        [ 8, 60, 0.85, 1],
+        [16, 60, 0.85, 1],
+        [24, 60, 0.85, 1],
+        // Snares on beats 2 & 4
+        [ 4, 60, 0.60, 1],
+        [12, 60, 0.60, 1],
+        [20, 60, 0.60, 1],
+        [28, 60, 0.60, 1],
+        // Hi-hats on all off-beats (8th-note upbeats)
+        [ 2, 60, 0.28, 1],
+        [ 6, 60, 0.28, 1],
+        [10, 60, 0.28, 1],
+        [14, 60, 0.28, 1],
+        [18, 60, 0.28, 1],
+        [22, 60, 0.28, 1],
+        [26, 60, 0.28, 1],
+        [30, 60, 0.28, 1],
       ],
     };
     [DEMO.lead, DEMO.bass, DEMO.perc].forEach((evts, ti) => {
@@ -423,6 +603,8 @@
         hdr += `<th class="track-header">
           <div class="track-controls">
             <select class="inst-sel" data-t="${t}">${opts}</select>
+            <input type="number" class="voice-in" data-t="${t}"
+              value="${tr.voices}" min="1" max="8" title="Voice count for this track">
             <button class="mute-btn${tr.muted ? ' muted' : ''}" data-t="${t}">M</button>
             <button class="del-track-btn" data-t="${t}">×</button>
           </div>
@@ -545,8 +727,8 @@
       const length   = +document.getElementById('ed-len').value || 1;
       setCell(t, r, { note, velocity, length });
 
-      // Preview the note
-      const inst = instruments[tracks[t].instIdx];
+      // Preview the note through this track's own instrument
+      const inst = tracks[t].inst;
       inst.noteOn(note, velocity);
       setTimeout(() => inst.noteOff(note), Math.max(50, length * (60000 / seq.bpm / ticksPerBeat)));
 
@@ -592,8 +774,29 @@
 
     // ── track header controls ─────────────────────────────────────────────────
     document.getElementById('grid-head').addEventListener('change', e => {
+      const t = +e.target.dataset.t;
+      const track = tracks[t];
+      if (!track) return;
+
       if (e.target.classList.contains('inst-sel')) {
-        tracks[+e.target.dataset.t].instIdx = +e.target.value;
+        track.inst.dispose();
+        track.instIdx = +e.target.value;
+        // Reset voice count to the new instrument's default
+        track.voices = instrumentDefs[track.instIdx]?.voices ?? 4;
+        track.inst   = createTrackInst(track.instIdx, track.voices);
+        // Reflect new default voice count in the header input
+        const vin = document.querySelector(`.voice-in[data-t="${t}"]`);
+        if (vin) vin.value = track.voices;
+        if (seq.running) seq.setPattern(buildSeqPattern());
+      }
+
+      if (e.target.classList.contains('voice-in')) {
+        const newVoices = Math.max(1, Math.min(8, +e.target.value || 1));
+        e.target.value  = newVoices;
+        track.inst.dispose();
+        track.voices = newVoices;
+        track.inst   = createTrackInst(track.instIdx, newVoices);
+        if (seq.running) seq.setPattern(buildSeqPattern());
       }
     });
 
@@ -601,16 +804,52 @@
       const t = e.target.dataset.t;
       if (t == null) return;
       if (e.target.classList.contains('mute-btn')) {
-        tracks[+t].muted = !tracks[+t].muted;
-        e.target.classList.toggle('muted', tracks[+t].muted);
+        const track = tracks[+t];
+        track.muted = !track.muted;
+        e.target.classList.toggle('muted', track.muted);
+        if (track.muted) track.inst.allNotesOff();
+        if (seq.running) seq.setPattern(buildSeqPattern());
       }
       if (e.target.classList.contains('del-track-btn')) {
         if (tracks.length <= 1) return; // keep at least one
+        tracks[+t].inst?.dispose();
         if (selected?.t === +t) selected = null;
         tracks.splice(+t, 1);
         buildGrid();
         updateEditor();
       }
+    });
+
+    // ── new / clear all ───────────────────────────────────────────────────────
+    document.getElementById('new-btn').addEventListener('click', () => {
+      seq.onLoopEnd = null;
+      if (seq.running) {
+        seq.stop();
+        playBtn.textContent = '▶ Play';
+        playBtn.classList.remove('playing');
+      }
+      playSongBtn.textContent = '▶ Song';
+      playSongBtn.classList.remove('playing');
+      for (const tr of tracks) tr.inst?.dispose();
+
+      // Reset everything to one blank pattern, one blank track
+      tracks.length = 0;
+      tracks.push(makeTrack('Track 1', 0));
+      patternLength = 32;
+      document.getElementById('length-in').value = 32;
+      patterns.length = 0;
+      patterns.push({ name: 'Pattern 1', patternLength: 32, tracks: cloneTracks(tracks) });
+      currentPatternIdx = 0;
+      song.length = 0;
+      songMode    = false;
+      songPlayPos = 0;
+      selected    = null;
+
+      buildGrid();
+      updateEditor();
+      buildPatternTabs();
+      buildSongArrangement();
+      flashStatus('Cleared.');
     });
 
     // ── add track ─────────────────────────────────────────────────────────────
@@ -645,11 +884,21 @@
     playBtn.addEventListener('click', async () => {
       await ensureAudio();
       if (seq.running) {
+        seq.onLoopEnd = null;
         seq.stop();
         playBtn.textContent = '▶ Play';
         playBtn.classList.remove('playing');
+        if (songMode) {
+          songMode    = false;
+          songPlayPos = 0;
+          playSongBtn.textContent = '▶ Song';
+          playSongBtn.classList.remove('playing');
+          buildSongArrangement();
+        }
       } else {
-        seq.bpm = +document.getElementById('bpm-in').value;
+        songMode = false;
+        seq.bpm  = +document.getElementById('bpm-in').value;
+        seq.loop = true;
         seq.setPattern(buildSeqPattern());
         seq.start();
         playBtn.textContent = '■ Stop';
@@ -665,7 +914,7 @@
           .filter(tr => !tr.muted)
           .map(tr => ({
             id: tr.name,
-            instrument: instruments[tr.instIdx],
+            instrument: tr.inst,
             events: tr.cells
               .slice(0, patternLength)
               .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
@@ -677,19 +926,21 @@
     // ── row counter ───────────────────────────────────────────────────────────
     const rowNum = document.getElementById('row-num');
     let lastPlayingRow = -1;
+    let lastSongPos    = -1;
     (function tick() {
       const cur = seq.running ? seq.currentRow : -1;
       rowNum.textContent = cur >= 0 ? cur : '--';
       if (cur !== lastPlayingRow) {
-        if (lastPlayingRow >= 0) {
-          document.querySelector(`#grid-body tr[data-r="${lastPlayingRow}"]`)
-            ?.classList.remove('playing');
-        }
-        if (cur >= 0) {
-          document.querySelector(`#grid-body tr[data-r="${cur}"]`)
-            ?.classList.add('playing');
-        }
+        if (lastPlayingRow >= 0)
+          document.querySelector(`#grid-body tr[data-r="${lastPlayingRow}"]`)?.classList.remove('playing');
+        if (cur >= 0)
+          document.querySelector(`#grid-body tr[data-r="${cur}"]`)?.classList.add('playing');
         lastPlayingRow = cur;
+      }
+      // Refresh song slot highlight when position changes
+      if (songMode && songPlayPos !== lastSongPos) {
+        buildSongArrangement();
+        lastSongPos = songPlayPos;
       }
       requestAnimationFrame(tick);
     })();
@@ -731,9 +982,309 @@
       }
     });
 
+    // ── pattern helpers ───────────────────────────────────────────────────────
+    // Serialize tracks to plain data — strips the live `inst` so patterns can be
+    // stored as JSON-safe snapshots and later restored with fresh OscSynth instances.
+    function cloneTracks(src) {
+      return src.map(({ inst, ...t }) => ({
+        ...t,
+        cells: t.cells.map(c => c ? { ...c } : null),
+      }));
+    }
+
+    function saveCurrentPattern() {
+      patterns[currentPatternIdx] = {
+        ...patterns[currentPatternIdx],
+        patternLength,
+        tracks: cloneTracks(tracks),
+      };
+    }
+
+    function applyPattern(idx) {
+      // Dispose the current pattern's instruments before replacing
+      for (const tr of tracks) tr.inst?.dispose();
+      const p = patterns[idx];
+      tracks.length = 0;
+      for (const t of cloneTracks(p.tracks)) {
+        tracks.push({ ...t, inst: createTrackInst(t.instIdx, t.voices) });
+      }
+      patternLength = p.patternLength;
+      document.getElementById('length-in').value = patternLength;
+    }
+
+    function switchToPattern(idx) {
+      if (idx === currentPatternIdx && !songMode) return;
+      saveCurrentPattern();
+      currentPatternIdx = idx;
+      applyPattern(idx);
+      selected = null;
+      buildGrid();
+      updateEditor();
+      buildPatternTabs();
+      if (seq.running && !songMode) seq.setPattern(buildSeqPattern());
+    }
+
+    function buildPatternTabs() {
+      document.getElementById('pattern-tabs').innerHTML =
+        patterns.map((p, i) =>
+          `<button class="pat-tab${i === currentPatternIdx ? ' active' : ''}" data-p="${i}">${p.name}</button>`
+        ).join('') +
+        '<button class="pat-tab add-pat" id="add-pat-btn">+ Pattern</button>';
+    }
+
+    function buildSongArrangement() {
+      const el = document.getElementById('song-slots');
+      if (song.length === 0) {
+        el.innerHTML = '<span class="song-empty">Empty — add patterns with "+ Add"</span>';
+        return;
+      }
+      el.innerHTML = song.map((patIdx, i) =>
+        `<div class="song-slot${songMode && i === songPlayPos ? ' playing' : ''}">
+          ${patterns[patIdx]?.name ?? '?'}
+          <button class="song-slot-x" data-i="${i}" title="Remove">×</button>
+        </div>`
+      ).join('');
+    }
+
+    // ── pattern tab events ────────────────────────────────────────────────────
+    document.getElementById('pattern-tabs').addEventListener('click', e => {
+      const tab = e.target.closest('[data-p]');
+      if (tab) { switchToPattern(+tab.dataset.p); return; }
+      if (e.target.id === 'add-pat-btn') {
+        saveCurrentPattern();
+        patterns.push({
+          name: `Pattern ${patterns.length + 1}`,
+          patternLength: 32,
+          tracks: [{ name: 'Track 1', instIdx: 0, muted: false, cells: Array(128).fill(null) }],
+        });
+        currentPatternIdx = patterns.length - 1;
+        applyPattern(currentPatternIdx);
+        selected = null;
+        buildGrid();
+        updateEditor();
+        buildPatternTabs();
+      }
+    });
+
+    // ── song arrangement events ───────────────────────────────────────────────
+    document.getElementById('song-add-btn').addEventListener('click', () => {
+      saveCurrentPattern();
+      song.push(currentPatternIdx);
+      buildSongArrangement();
+      flashStatus(`"${patterns[currentPatternIdx].name}" added to song (${song.length} step${song.length !== 1 ? 's' : ''}).`);
+    });
+
+    document.getElementById('song-slots').addEventListener('click', e => {
+      const btn = e.target.closest('.song-slot-x');
+      if (!btn) return;
+      const i = +btn.dataset.i;
+      song.splice(i, 1);
+      if (songPlayPos >= song.length) songPlayPos = Math.max(0, song.length - 1);
+      buildSongArrangement();
+    });
+
+    // ── song playback ─────────────────────────────────────────────────────────
+    const playSongBtn = document.getElementById('play-song-btn');
+
+    playSongBtn.addEventListener('click', async () => {
+      await ensureAudio();
+
+      if (songMode) {
+        // Stop song
+        seq.onLoopEnd = null;
+        seq.stop();
+        songMode    = false;
+        songPlayPos = 0;
+        playSongBtn.textContent = '▶ Song';
+        playSongBtn.classList.remove('playing');
+        buildSongArrangement();
+        return;
+      }
+
+      if (song.length === 0) {
+        flashStatus('Song is empty — add patterns with "+ Add".');
+        return;
+      }
+
+      // Stop regular pattern playback if running
+      if (seq.running) {
+        seq.stop();
+        playBtn.textContent = '▶ Play';
+        playBtn.classList.remove('playing');
+      }
+
+      saveCurrentPattern();
+      songMode    = true;
+      songPlayPos = 0;
+
+      // Load first song pattern into editor + sequencer
+      currentPatternIdx = song[0];
+      applyPattern(currentPatternIdx);
+      buildGrid();
+      buildPatternTabs();
+      buildSongArrangement();
+
+      seq.onLoopEnd = () => {
+        songPlayPos++;
+        if (songPlayPos >= song.length) {
+          // Song complete — stop cleanly
+          seq.onLoopEnd = null;
+          seq.stop();
+          songMode    = false;
+          songPlayPos = 0;
+          playSongBtn.textContent = '▶ Song';
+          playSongBtn.classList.remove('playing');
+          buildSongArrangement();
+          return;
+        }
+        // Advance to next pattern — swap tracks & update sequencer in place
+        currentPatternIdx = song[songPlayPos];
+        applyPattern(currentPatternIdx);
+        seq.setPattern(buildSeqPattern());
+        buildPatternTabs();
+        buildSongArrangement();
+        // Defer grid rebuild so it doesn't block the scheduler tick
+        setTimeout(buildGrid, 0);
+      };
+
+      seq.bpm  = +document.getElementById('bpm-in').value;
+      seq.loop = true;
+      seq.setPattern(buildSeqPattern());
+      seq.start();
+
+      playSongBtn.textContent = '■ Stop Song';
+      playSongBtn.classList.add('playing');
+    });
+
+    // ── MIDI import ───────────────────────────────────────────────────────────
+    // Maps a MIDI channel number to a default instrument index for the tracker.
+    // Channel 9 is the GM drum channel → noise. Others cycle through melodic presets.
+    function channelToInstIdx(channel, isDrum) {
+      if (isDrum) return 3; // noise
+      const MAP = [0, 2, 1, 0, 2, 1, 0, 2, 1, 3, 0, 2, 1, 0, 2, 1];
+      return MAP[channel] ?? 0;
+    }
+
+    document.getElementById('import-midi-btn').addEventListener('click', () => {
+      document.getElementById('midi-file-input').click();
+    });
+
+    document.getElementById('midi-file-input').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      e.target.value = '';
+
+      flashStatus('Parsing MIDI…');
+      try {
+        const buffer = await file.arrayBuffer();
+        // Parse with no row cap — we do the slicing ourselves below
+        const result = parseMidi(buffer, ticksPerBeat, 99999);
+
+        if (result.tracks.length === 0) {
+          flashStatus('<span class="err">No note events found in file.</span>');
+          return;
+        }
+
+        // Stop any running playback
+        seq.onLoopEnd = null;
+        if (seq.running) {
+          seq.stop();
+          playBtn.textContent = '▶ Play';
+          playBtn.classList.remove('playing');
+        }
+        playSongBtn.textContent = '▶ Song';
+        playSongBtn.classList.remove('playing');
+        songMode    = false;
+        songPlayPos = 0;
+
+        // ── chunk into 16-bar patterns ──────────────────────────────────────
+        // 1 bar = 4 beats; each beat = ticksPerBeat rows
+        const rowsPerBar   = ticksPerBeat * 4;
+        const rowsPerChunk = rowsPerBar * 16;
+
+        // Find the last row that has any content
+        const contentRows = result.tracks.reduce((max, mt) =>
+          mt.events.reduce((m, ev) => Math.max(m, ev.row + ev.length), max), 0);
+
+        const numChunks = Math.max(1, Math.ceil(contentRows / rowsPerChunk));
+
+        // Dispose current track instruments before rebuilding
+        for (const tr of tracks) tr.inst?.dispose();
+        tracks.length = 0;
+
+        // Rebuild patterns and song from scratch.
+        // Patterns store plain data (no `inst`) — applyPattern() creates instances on load.
+        patterns.length = 0;
+        song.length     = 0;
+
+        const baseName = file.name.replace(/\.midi?$/i, '');
+
+        for (let chunk = 0; chunk < numChunks; chunk++) {
+          const chunkStart = chunk * rowsPerChunk;
+          const chunkEnd   = chunkStart + rowsPerChunk;
+
+          const patTracks = result.tracks.map(mt => {
+            const instIdx = channelToInstIdx(mt.channel, mt.isDrum);
+            const def     = instrumentDefs[instIdx] ?? instrumentDefs[0];
+            const t = {
+              name:    mt.name,
+              instIdx,
+              voices:  def.voices ?? 4,
+              muted:   false,
+              cells:   Array(rowsPerChunk).fill(null),
+              // No `inst` here — created by applyPattern() when this pattern is loaded
+            };
+            for (const ev of mt.events) {
+              if (ev.row < chunkStart || ev.row >= chunkEnd) continue;
+              const row    = ev.row - chunkStart;
+              const length = Math.min(ev.length, rowsPerChunk - row);
+              t.cells[row] = { note: ev.note, velocity: ev.velocity, length };
+            }
+            return t;
+          });
+
+          patterns.push({
+            name:          `${baseName} ${chunk + 1}`,
+            patternLength: rowsPerChunk,
+            tracks:        patTracks,
+          });
+          song.push(chunk);
+        }
+
+        // Load the first pattern into the editor
+        currentPatternIdx = 0;
+        applyPattern(0);
+        seq.bpm = result.bpm;
+        document.getElementById('bpm-in').value = result.bpm;
+        selected = null;
+
+        buildGrid();
+        updateEditor();
+        buildPatternTabs();
+        buildSongArrangement();
+
+        const trackSummary = result.tracks
+          .map(mt => `${mt.name} → ${INST_NAMES[channelToInstIdx(mt.channel, mt.isDrum)]}`)
+          .join(', ');
+        flashStatus(
+          `<span class="ok">Imported "${file.name}"</span> — ` +
+          `${result.bpm} BPM · ${numChunks} pattern${numChunks !== 1 ? 's' : ''} ` +
+          `(${rowsPerChunk} rows / 16 bars each) · ${result.tracks.length} track${result.tracks.length !== 1 ? 's' : ''}: ${trackSummary}`,
+          6000,
+        );
+      } catch (err) {
+        flashStatus(`<span class="err">MIDI parse error: ${err.message}</span>`, 5000);
+        console.error(err);
+      }
+    });
+
     // ── init ──────────────────────────────────────────────────────────────────
-    seq.bpm = 160;
+    seq.bpm  = 160;
+    seq.loop = true;
+    saveCurrentPattern();   // snapshot demo tracks into patterns[0]
     buildGrid();
+    buildPatternTabs();
+    buildSongArrangement();
   </script>
 </body>
 </html>

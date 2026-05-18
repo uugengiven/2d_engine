@@ -56,6 +56,7 @@ class SynthProcessor extends AudioWorkletProcessor {
             case 'noteOff':     this._noteOff(msg);       break;
             case 'killVoice':   this._killVoice(msg);     break;
             case 'allNotesOff': this._allNotesOff(msg);   break;
+            case 'dispose':     this._disposed = true;    break;
         }
     }
 
@@ -145,6 +146,7 @@ class SynthProcessor extends AudioWorkletProcessor {
     // ── render ──────────────────────────────────────────────────────────────
 
     process(_inputs, outputs) {
+        if (this._disposed) return false; // signal GC to the audio engine
         const out = outputs[0];
         if (!out || out.length < 1) return true;
 

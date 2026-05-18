@@ -30,6 +30,7 @@ export class Sequencer {
     #timerId = null;
     #running = false;
     #loop = true;
+    onLoopEnd = null; // called at each loop boundary — used by song arrangement
 
     // { time: number, instrument: OscSynth, note: number }[]
     #pendingNoteOffs = [];
@@ -121,6 +122,7 @@ export class Sequencer {
             if (this.#currentRow >= length) {
                 if (this.#loop) {
                     this.#currentRow = 0;
+                    this.onLoopEnd?.();
                 } else {
                     this.#running = false;
                     return;
