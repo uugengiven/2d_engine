@@ -442,25 +442,12 @@
     const seq = new Sequencer(audio.context);
 
     // ── state ─────────────────────────────────────────────────────────────────
-    // cells[row] = null | { note, velocity, length }
-    function makeTrack(name, instIdx, size = 512, voiceOverride = null) {
-      const def    = instrumentDefs[instIdx] ?? instrumentDefs[0];
-      const voices = voiceOverride ?? def.voices ?? 4;
-      return {
-        name,
-        instIdx,
-        voices,
-        muted: false,
-        inst:  createTrackInst(instIdx, voices),
-        cells: Array(size).fill(null),
-      };
-    }
+    // tracks: song-level OscSynth instances, persistent across pattern switches.
+    // patterns[i].cells[trackId]: note data for each track, keyed by track id.
+    // Separating instruments from note data means pattern switches never
+    // recreate audio nodes, and instruments can be swapped seamlessly mid-play.
 
-    const tracks = [
-      makeTrack('Lead', 0),
-      makeTrack('Bass', 2),
-      makeTrack('Perc', 3),
-    ];
+    const tracks = [];  // { id, name, instIdx, voices, muted, inst }
 
     let patternLength = 32;
     let ticksPerBeat  = 4;
@@ -469,14 +456,51 @@
     let audioReady    = false;
 
     // ── pattern & song state ──────────────────────────────────────────────────
-    // Each pattern snapshot: { name, patternLength, tracks: cloned track array }
-    const patterns = [{ name: 'Pattern 1', patternLength: 32, tracks: [] }];
+    // patterns[i] = { name, patternLength, cells: { [trackId]: Cell[] } }
+    const patterns = [{ name: 'Pattern 1', patternLength: 32, cells: {} }];
     let currentPatternIdx = 0;
 
     // Song arrangement: ordered list of pattern indices
     const song = [];
     let songMode    = false;
     let songPlayPos = 0;
+
+    // ── track management ──────────────────────────────────────────────────────
+    let _trackIdSeq = 0;
+
+    function addTrack(name, instIdx, voiceOverride = null) {
+      const def    = instrumentDefs[instIdx] ?? instrumentDefs[0];
+      const voices = voiceOverride ?? def.voices ?? 4;
+      const id     = 't' + (++_trackIdSeq);
+      tracks.push({ id, name, instIdx, voices, muted: false, inst: createTrackInst(instIdx, voices) });
+      for (const p of patterns) {
+        if (!p.cells[id]) p.cells[id] = Array(512).fill(null);
+      }
+      return id;
+    }
+
+    function removeTrack(tIdx) {
+      if (tracks.length <= 1) return;
+      const { id, inst } = tracks[tIdx];
+      inst?.dispose();
+      for (const p of patterns) delete p.cells[id];
+      tracks.splice(tIdx, 1);
+    }
+
+    // Seamless instrument swap: new OscSynth starts immediately;
+    // old one finishes its release tail before being disposed.
+    function swapTrackInstrument(tIdx, newInstIdx, newVoices) {
+      const track   = tracks[tIdx];
+      const oldInst = track.inst;
+      const oldIdx  = track.instIdx;
+      track.instIdx = newInstIdx;
+      track.voices  = newVoices ?? instrumentDefs[newInstIdx]?.voices ?? 4;
+      track.inst    = createTrackInst(newInstIdx, track.voices);
+      oldInst.allNotesOff();
+      const drainMs = ((instrumentDefs[oldIdx]?.envelope?.release ?? 0.05) + 0.15) * 1000;
+      setTimeout(() => oldInst.dispose(), drainMs);
+      if (seq.running) seq.setPattern(buildSeqPattern());
+    }
 
     // ── pre-populate demo pattern ─────────────────────────────────────────────
     // "Canopy Run" — original NES-style composition in C major, I–vi–IV–V
@@ -555,9 +579,14 @@
         [30, 60, 0.28, 1],
       ],
     };
+    addTrack('Lead', 0);
+    addTrack('Bass', 2);
+    addTrack('Perc', 3);
+
     [DEMO.lead, DEMO.bass, DEMO.perc].forEach((evts, ti) => {
+      const cells = patterns[0].cells[tracks[ti].id];
       evts.forEach(([row, note, velocity, length]) => {
-        tracks[ti].cells[row] = { note, velocity, length };
+        cells[row] = { note, velocity, length };
       });
     });
 
@@ -622,8 +651,9 @@
         body += `<tr class="row${beat}" data-r="${r}">`;
         body += `<td class="row-num">${rowLabel}</td>`;
         tracks.forEach((tr, t) => {
-          const sel = selected?.t === t && selected?.r === r ? ' selected' : '';
-          body += `<td class="cell${sel}" data-t="${t}" data-r="${r}">${cellHTML(tr.cells[r])}</td>`;
+          const sel  = selected?.t === t && selected?.r === r ? ' selected' : '';
+          const cell = (patterns[currentPatternIdx].cells[tr.id] ?? [])[r];
+          body += `<td class="cell${sel}" data-t="${t}" data-r="${r}">${cellHTML(cell)}</td>`;
         });
         body += '</tr>';
       }
@@ -633,7 +663,8 @@
     function updateCellEl(t, r) {
       const td = document.querySelector(`#grid-body td.cell[data-t="${t}"][data-r="${r}"]`);
       if (!td) return;
-      td.innerHTML = cellHTML(tracks[t].cells[r]);
+      const cell = (patterns[currentPatternIdx].cells[tracks[t]?.id] ?? [])[r];
+      td.innerHTML = cellHTML(cell);
       td.className = `cell${selected?.t === t && selected?.r === r ? ' selected' : ''}`;
     }
 
@@ -668,7 +699,7 @@
       }
       ph.style.display = 'none';
       fld.classList.add('visible');
-      const cell = tracks[selected.t].cells[selected.r];
+      const cell = (patterns[currentPatternIdx].cells[tracks[selected.t]?.id] ?? [])[selected.r];
       const noteIn = document.getElementById('ed-note');
       const velIn  = document.getElementById('ed-vel');
       const lenIn  = document.getElementById('ed-len');
@@ -679,7 +710,7 @@
     }
 
     function setCell(t, r, cell) {
-      tracks[t].cells[r] = cell;
+      patterns[currentPatternIdx].cells[tracks[t].id][r] = cell;
       updateCellEl(t, r);
       if (selected?.t === t && selected?.r === r) updateEditor();
     }
@@ -728,7 +759,6 @@
       const length   = +document.getElementById('ed-len').value || 1;
       setCell(t, r, { note, velocity, length });
 
-      // Preview the note through this track's own instrument
       const inst = tracks[t].inst;
       inst.noteOn(note, velocity);
       setTimeout(() => inst.noteOff(note), Math.max(50, length * (60000 / seq.bpm / ticksPerBeat)));
@@ -743,7 +773,8 @@
       const midi = nameToMidi(e.target.value);
       if (midi == null) { e.target.style.borderColor = '#f06a6a'; return; }
       e.target.style.borderColor = '';
-      const cell = tracks[selected.t].cells[selected.r] ?? { velocity: 0.8, length: 1 };
+      const pcells = patterns[currentPatternIdx].cells[tracks[selected.t]?.id] ?? [];
+      const cell = pcells[selected.r] ?? { velocity: 0.8, length: 1 };
       setCell(selected.t, selected.r, { ...cell, note: midi });
     });
 
@@ -751,13 +782,13 @@
       const v = +e.target.value;
       document.getElementById('ed-vel-val').textContent = v.toFixed(2);
       if (!selected) return;
-      const cell = tracks[selected.t].cells[selected.r];
+      const cell = (patterns[currentPatternIdx].cells[tracks[selected.t]?.id] ?? [])[selected.r];
       if (cell) setCell(selected.t, selected.r, { ...cell, velocity: v });
     });
 
     document.getElementById('ed-len').addEventListener('change', e => {
       if (!selected) return;
-      const cell = tracks[selected.t].cells[selected.r];
+      const cell = (patterns[currentPatternIdx].cells[tracks[selected.t]?.id] ?? [])[selected.r];
       if (cell) setCell(selected.t, selected.r, { ...cell, length: Math.max(1, +e.target.value) });
     });
 
@@ -780,24 +811,17 @@
       if (!track) return;
 
       if (e.target.classList.contains('inst-sel')) {
-        track.inst.dispose();
-        track.instIdx = +e.target.value;
-        // Reset voice count to the new instrument's default
-        track.voices = instrumentDefs[track.instIdx]?.voices ?? 4;
-        track.inst   = createTrackInst(track.instIdx, track.voices);
+        const newInstIdx = +e.target.value;
+        swapTrackInstrument(t, newInstIdx);
         // Reflect new default voice count in the header input
         const vin = document.querySelector(`.voice-in[data-t="${t}"]`);
         if (vin) vin.value = track.voices;
-        if (seq.running) seq.setPattern(buildSeqPattern());
       }
 
       if (e.target.classList.contains('voice-in')) {
         const newVoices = Math.max(1, Math.min(8, +e.target.value || 1));
         e.target.value  = newVoices;
-        track.inst.dispose();
-        track.voices = newVoices;
-        track.inst   = createTrackInst(track.instIdx, newVoices);
-        if (seq.running) seq.setPattern(buildSeqPattern());
+        swapTrackInstrument(t, track.instIdx, newVoices);
       }
     });
 
@@ -812,10 +836,8 @@
         if (seq.running) seq.setPattern(buildSeqPattern());
       }
       if (e.target.classList.contains('del-track-btn')) {
-        if (tracks.length <= 1) return; // keep at least one
-        tracks[+t].inst?.dispose();
         if (selected?.t === +t) selected = null;
-        tracks.splice(+t, 1);
+        removeTrack(+t);
         buildGrid();
         updateEditor();
       }
@@ -835,12 +857,12 @@
 
       // Reset everything to one blank pattern, one blank track
       tracks.length = 0;
-      tracks.push(makeTrack('Track 1', 0));
       patternLength = 32;
       document.getElementById('length-in').value = 32;
       patterns.length = 0;
-      patterns.push({ name: 'Pattern 1', patternLength: 32, tracks: cloneTracks(tracks) });
+      patterns.push({ name: 'Pattern 1', patternLength: 32, cells: {} });
       currentPatternIdx = 0;
+      addTrack('Track 1', 0);
       song.length = 0;
       songMode    = false;
       songPlayPos = 0;
@@ -855,7 +877,7 @@
 
     // ── add track ─────────────────────────────────────────────────────────────
     document.getElementById('add-track-btn').addEventListener('click', () => {
-      tracks.push(makeTrack(`Track ${tracks.length + 1}`, 0));
+      addTrack(`Track ${tracks.length + 1}`, 0);
       buildGrid();
     });
 
@@ -908,15 +930,16 @@
     });
 
     function buildSeqPattern() {
+      const pcells = patterns[currentPatternIdx].cells;
       return {
         ticksPerBeat,
         length: patternLength,
         tracks: tracks
           .filter(tr => !tr.muted)
           .map(tr => ({
-            id: tr.name,
+            id: tr.id,
             instrument: tr.inst,
-            events: tr.cells
+            events: (pcells[tr.id] ?? [])
               .slice(0, patternLength)
               .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
               .filter(Boolean),
@@ -948,6 +971,7 @@
 
     // ── export ────────────────────────────────────────────────────────────────
     function buildExportJSON() {
+      const pcells = patterns[currentPatternIdx].cells;
       return JSON.stringify({
         ticksPerBeat,
         length: patternLength,
@@ -955,7 +979,7 @@
           id: tr.name.toLowerCase().replace(/\s+/g, '-'),
           name: tr.name,
           instrumentUrl: INST_URLS[tr.instIdx],
-          events: tr.cells
+          events: (pcells[tr.id] ?? [])
             .slice(0, patternLength)
             .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
             .filter(Boolean),
@@ -984,30 +1008,17 @@
     });
 
     // ── pattern helpers ───────────────────────────────────────────────────────
-    // Serialize tracks to plain data — strips the live `inst` so patterns can be
-    // stored as JSON-safe snapshots and later restored with fresh OscSynth instances.
-    function cloneTracks(src) {
-      return src.map(({ inst, ...t }) => ({
-        ...t,
-        cells: t.cells.map(c => c ? { ...c } : null),
-      }));
-    }
-
     function saveCurrentPattern() {
-      patterns[currentPatternIdx] = {
-        ...patterns[currentPatternIdx],
-        patternLength,
-        tracks: cloneTracks(tracks),
-      };
+      patterns[currentPatternIdx].patternLength = patternLength;
+      // Cells are mutated in place — nothing else to persist.
     }
 
     function applyPattern(idx) {
-      // Dispose the current pattern's instruments before replacing
-      for (const tr of tracks) tr.inst?.dispose();
+      // Instruments stay alive — only patternLength changes.
+      // Ensure every track has a cell array in this pattern.
       const p = patterns[idx];
-      tracks.length = 0;
-      for (const t of cloneTracks(p.tracks)) {
-        tracks.push({ ...t, inst: createTrackInst(t.instIdx, t.voices) });
+      for (const tr of tracks) {
+        if (!p.cells[tr.id]) p.cells[tr.id] = Array(512).fill(null);
       }
       patternLength = p.patternLength;
       document.getElementById('length-in').value = patternLength;
@@ -1053,10 +1064,12 @@
       if (tab) { switchToPattern(+tab.dataset.p); return; }
       if (e.target.id === 'add-pat-btn') {
         saveCurrentPattern();
+        const cells = {};
+        for (const tr of tracks) cells[tr.id] = Array(512).fill(null);
         patterns.push({
           name: `Pattern ${patterns.length + 1}`,
           patternLength: 32,
-          tracks: [{ name: 'Track 1', instIdx: 0, muted: false, cells: Array(128).fill(null) }],
+          cells,
         });
         currentPatternIdx = patterns.length - 1;
         applyPattern(currentPatternIdx);
@@ -1209,45 +1222,43 @@
 
         const numChunks = Math.max(1, Math.ceil(contentRows / rowsPerChunk));
 
-        // Dispose current track instruments before rebuilding
+        // Dispose current tracks and rebuild from MIDI channels.
         for (const tr of tracks) tr.inst?.dispose();
-        tracks.length = 0;
-
-        // Rebuild patterns and song from scratch.
-        // Patterns store plain data (no `inst`) — applyPattern() creates instances on load.
+        tracks.length   = 0;
         patterns.length = 0;
         song.length     = 0;
 
         const baseName = file.name.replace(/\.midi?$/i, '');
 
+        // Create one song-level track per MIDI channel — instruments persist
+        // across all patterns so pattern switches never recreate audio nodes.
+        const midiTrackIds = result.tracks.map(mt => {
+          const instIdx = channelToInstIdx(mt.channel, mt.isDrum);
+          return addTrack(mt.name, instIdx); // adds empty cells to patterns (none yet)
+        });
+
+        // Build patterns (cells only — no instruments)
         for (let chunk = 0; chunk < numChunks; chunk++) {
           const chunkStart = chunk * rowsPerChunk;
           const chunkEnd   = chunkStart + rowsPerChunk;
 
-          const patTracks = result.tracks.map(mt => {
-            const instIdx = channelToInstIdx(mt.channel, mt.isDrum);
-            const def     = instrumentDefs[instIdx] ?? instrumentDefs[0];
-            const t = {
-              name:    mt.name,
-              instIdx,
-              voices:  def.voices ?? 4,
-              muted:   false,
-              cells:   Array(rowsPerChunk).fill(null),
-              // No `inst` here — created by applyPattern() when this pattern is loaded
-            };
+          const cells = {};
+          result.tracks.forEach((mt, ti) => {
+            const id   = midiTrackIds[ti];
+            const carr = Array(rowsPerChunk).fill(null);
             for (const ev of mt.events) {
               if (ev.row < chunkStart || ev.row >= chunkEnd) continue;
               const row    = ev.row - chunkStart;
               const length = Math.min(ev.length, rowsPerChunk - row);
-              t.cells[row] = { note: ev.note, velocity: ev.velocity, length };
+              carr[row] = { note: ev.note, velocity: ev.velocity, length };
             }
-            return t;
+            cells[id] = carr;
           });
 
           patterns.push({
             name:          `${baseName} ${chunk + 1}`,
             patternLength: rowsPerChunk,
-            tracks:        patTracks,
+            cells,
           });
           song.push(chunk);
         }
@@ -1282,7 +1293,6 @@
     // ── init ──────────────────────────────────────────────────────────────────
     seq.bpm  = 160;
     seq.loop = true;
-    saveCurrentPattern();   // snapshot demo tracks into patterns[0]
     buildGrid();
     buildPatternTabs();
     buildSongArrangement();
