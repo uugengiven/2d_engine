@@ -400,6 +400,7 @@
 
   <script type="module">
     import { AudioManager } from './engine/audio.js';
+    import { OscSynth }     from './engine/synth.js';
     import { Sequencer }    from './engine/sequencer.js';
     import { parseMidi }    from './engine/midi-import.js';
 
@@ -1197,10 +1198,10 @@
         songMode    = false;
         songPlayPos = 0;
 
-        // ── chunk into 16-bar patterns ──────────────────────────────────────
+        // ── chunk into 8-bar patterns ───────────────────────────────────────
         // 1 bar = 4 beats; each beat = ticksPerBeat rows
         const rowsPerBar   = ticksPerBeat * 4;
-        const rowsPerChunk = rowsPerBar * 16;
+        const rowsPerChunk = rowsPerBar * 8;
 
         // Find the last row that has any content
         const contentRows = result.tracks.reduce((max, mt) =>
@@ -1269,7 +1270,7 @@
         flashStatus(
           `<span class="ok">Imported "${file.name}"</span> — ` +
           `${result.bpm} BPM · ${numChunks} pattern${numChunks !== 1 ? 's' : ''} ` +
-          `(${rowsPerChunk} rows / 16 bars each) · ${result.tracks.length} track${result.tracks.length !== 1 ? 's' : ''}: ${trackSummary}`,
+          `(${rowsPerChunk} rows / 8 bars each) · ${result.tracks.length} track${result.tracks.length !== 1 ? 's' : ''}: ${trackSummary}`,
           6000,
         );
       } catch (err) {
