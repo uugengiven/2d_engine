@@ -1,0 +1,45 @@
+{
+  "type": "fm",
+  "name": "FM Bass",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 2.8,
+      "feedback": 0.3,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.08,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.04
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 0.85,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.002,
+        "decay":   0.12,
+        "sustain": 0.55,
+        "decay2":  0.8,
+        "release": 0.06
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1]
+  ],
+
+  "lfos": []
+}

@@ -449,6 +449,7 @@
   <script type="module">
     import { AudioManager } from './engine/audio.js';
     import { OscSynth }     from './engine/synth.js';
+    import { FmSynth }      from './engine/fm-synth.js';
     import { Sequencer }    from './engine/sequencer.js';
     import { parseMidi }    from './engine/midi-import.js';
 
@@ -459,9 +460,13 @@
       'instruments/nes-triangle.json',
       'instruments/nes-noise.json',
       'instruments/fat-triangle.json',
+      'instruments/fm-bell.json',
+      'instruments/fm-electric-piano.json',
+      'instruments/fm-bass.json',
+      'instruments/fm-brass.json',
     ];
-    const INST_NAMES  = ['Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Triangle'];
-    const INST_SHORT  = ['P25', 'P50', 'TRI', 'NOI', 'FAT'];
+    const INST_NAMES  = ['Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Triangle', 'FM Bell', 'FM E.Piano', 'FM Bass', 'FM Brass'];
+    const INST_SHORT  = ['P25', 'P50', 'TRI', 'NOI', 'FAT', 'FMB', 'FME', 'FMb', 'FMR'];
 
     const NOTE_NAMES   = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     const KEY_SEMITONE = { z:0,s:1,x:2,d:3,c:4,v:5,g:6,b:7,h:8,n:9,j:10,m:11 };
@@ -469,9 +474,9 @@
     // ── audio setup ───────────────────────────────────────────────────────────
     const audio = new AudioManager();
     audio.createChannel('tracker', { volume: 0.85 });
-    await audio.loadSynthWorklet();
+    await Promise.all([audio.loadSynthWorklet(), audio.loadFmWorklet()]);
 
-    // Load raw JSON definitions — each track creates its own OscSynth instance
+    // Load raw JSON definitions — each track creates its own synth instance
     // from these so multiple tracks using the same instrument never share a voice pool.
     let instrumentDefs = [];
     try {
@@ -485,13 +490,16 @@
     function createTrackInst(instIdx, voiceOverride = null) {
       const def = instrumentDefs[instIdx] ?? instrumentDefs[0];
       const vc  = voiceOverride ?? def.voices ?? 4;
-      return new OscSynth(audio.context, audio.getChannel('tracker'), def, { voices: vc });
+      const ch  = audio.getChannel('tracker');
+      return def.type === 'fm'
+        ? new FmSynth(audio.context, ch, def, { voices: vc })
+        : new OscSynth(audio.context, ch, def, { voices: vc });
     }
 
     const seq = new Sequencer(audio.context);
 
     // ── state ─────────────────────────────────────────────────────────────────
-    // tracks: song-level OscSynth instances, persistent across pattern switches.
+    // tracks: song-level synth instances (OscSynth or FmSynth), persistent across pattern switches.
     // patterns[i].cells[trackId]: note data for each track, keyed by track id.
     // Separating instruments from note data means pattern switches never
     // recreate audio nodes, and instruments can be swapped seamlessly mid-play.
@@ -538,18 +546,25 @@
       tracks.splice(tIdx, 1);
     }
 
-    // Seamless instrument swap: new OscSynth starts immediately;
+    // Seamless instrument swap: new synth starts immediately;
     // old one finishes its release tail before being disposed.
     function swapTrackInstrument(tIdx, newInstIdx, newVoices) {
       const track   = tracks[tIdx];
       const oldInst = track.inst;
-      const oldIdx  = track.instIdx;
+      const oldDef  = instrumentDefs[track.instIdx];
       track.instIdx = newInstIdx;
       track.voices  = newVoices ?? instrumentDefs[newInstIdx]?.voices ?? 4;
       track.inst    = createTrackInst(newInstIdx, track.voices);
       oldInst.allNotesOff();
-      const drainMs = ((instrumentDefs[oldIdx]?.envelope?.release ?? 0.05) + 0.15) * 1000;
-      setTimeout(() => oldInst.dispose(), drainMs);
+      // For FM instruments the release lives on each operator; scan for the longest.
+      let maxRelease = 0.05;
+      if (oldDef?.type === 'fm') {
+        for (const op of oldDef.operators ?? [])
+          maxRelease = Math.max(maxRelease, op.envelope?.release ?? 0.05);
+      } else {
+        maxRelease = oldDef?.envelope?.release ?? 0.05;
+      }
+      setTimeout(() => oldInst.dispose(), (maxRelease + 0.15) * 1000);
       if (seq.running) seq.setPattern(buildSeqPattern());
     }
 

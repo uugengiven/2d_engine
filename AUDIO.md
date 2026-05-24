@@ -478,6 +478,8 @@ function swapInstrument(trackId, newUrl) {
 
 ## Included Instruments
 
+**OscSynth (type: "osc")**
+
 | File | Description |
 |---|---|
 | `instruments/nes-pulse-25.json` | NES-style square wave, 25% duty cycle |
@@ -486,6 +488,126 @@ function swapInstrument(trackId, newUrl) {
 | `instruments/nes-noise.json` | NES LFSR noise (percussion) |
 | `instruments/fat-triangle.json` | Three-oscillator triangle, ±12 cent detuning |
 
+**FmSynth (type: "fm")**
+
+| File | Description |
+|---|---|
+| `instruments/fm-bell.json` | Metallic bell — high mod index, fast modulator decay |
+| `instruments/fm-electric-piano.json` | DX7-style Rhodes with characteristic attack click |
+| `instruments/fm-bass.json` | Punchy FM bass with operator feedback |
+| `instruments/fm-brass.json` | Bright brass/horn with vibrato LFO |
+
+---
+
+## FM Synthesis
+
+`FmSynth` is the companion to `OscSynth` for frequency-modulation synthesis. It runs in a separate AudioWorklet (`fm-worklet.js`) and exposes the same public API (`noteOn`, `noteOff`, `allNotesOff`, `dispose`, `name`, `voiceCount`). `loadInstrument()` auto-selects between `OscSynth` and `FmSynth` based on the `type` field in the JSON.
+
+```js
+// Auto-dispatches: returns OscSynth or FmSynth depending on def.type
+const bell = await audio.loadInstrument('instruments/fm-bell.json', { channel: 'music' });
+bell.noteOn(60, 0.8);
+
+// Or explicitly:
+await audio.loadFmWorklet();
+const piano = await audio.loadFmInstrument('instruments/fm-electric-piano.json');
+```
+
+### FM Instrument JSON Format
+
+```json
+{
+  "type": "fm",
+  "name": "FM Bell",
+  "version": "1.0",
+
+  "voices": 6,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio":    3.5,
+      "detune":   0,
+      "level":    3.5,
+      "feedback": 0,
+      "envelope": {
+        "attack": 0.001, "decay": 0.4, "sustain": 0.0, "decay2": 0, "release": 0.05
+      }
+    },
+    {
+      "ratio":    1.0,
+      "detune":   0,
+      "level":    0.7,
+      "feedback": 0,
+      "envelope": {
+        "attack": 0.001, "decay": 2.5, "sustain": 0.0, "decay2": 0, "release": 0.3
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1]
+  ],
+
+  "lfos": []
+}
+```
+
+### Operator fields
+
+| Field | Description |
+|---|---|
+| `ratio` | Frequency multiplier relative to the note frequency. `1.0` = same pitch, `2.0` = octave up, `0.5` = octave down. Non-integer ratios create inharmonic (bell, metallic) tones. |
+| `fixedHz` | If set, overrides `ratio` with a fixed frequency in Hz (useful for kick drums, gongs). |
+| `detune` | Fine-tune offset in cents (1/100 semitone). |
+| `level` | For **carriers**: final output amplitude. For **modulators**: modulation depth (higher = brighter / more complex timbre). |
+| `feedback` | Self-modulation amount 0–1. Adds odd harmonics; high values create buzzy/brass tones. |
+| `envelope` | Per-operator ADSR+decay2 envelope (same fields as OscSynth). Carriers shape overall amplitude; modulators shape brightness over time. |
+
+### Algorithm
+
+The `algorithm` array defines the modulation routing as a list of `[srcOp, dstOp]` pairs. `dstOp === -1` explicitly marks a carrier; any operator not listed as a source for another operator is also treated as a carrier automatically.
+
+```json
+"algorithm": [[0, 1]]
+```
+Op 0 modulates op 1; op 1 outputs to the mix.
+
+```json
+"algorithm": [[0, 1], [2, 3]]
+```
+Two independent 2-op stacks, both carriers feeding the mix in parallel.
+
+```json
+"algorithm": []
+```
+All operators are carriers — pure additive synthesis.
+
+Operators are processed in definition order. Put modulators **before** the operators they feed.
+
+### Common algorithm patterns
+
+```
+Serial 2-op:          [0→1]         M → C
+Parallel 2-op:        []            C + C
+3-op chain:           [0→1, 1→2]   M → M → C
+2-op + free carrier:  [0→1]        (M→C) + C
+Two 2-op stacks:      [0→1, 2→3]   (M→C) + (M→C)
+Additive (all out):   []            C + C + C + C
+```
+
+### LFO targets for FM
+
+Same as OscSynth, with additional per-operator level modulation:
+
+| `target` | Effect |
+|---|---|
+| `"pitch"` | Pitch vibrato in semitones |
+| `"volume"` | Amplitude modulation |
+| `"op0.level"` – `"op3.level"` | Modulates that operator's level (use on a modulator op for timbre LFO) |
+
 ---
 
 ## Test Pages
@@ -493,4 +615,5 @@ function swapInstrument(trackId, newUrl) {
 | Page | Purpose |
 |---|---|
 | `OscSynth.html` | Interactive keyboard + demo sequencer pattern + soundboard |
+| `FmSynth.html` | FM instrument editor — per-operator ADSR, algorithm selector, live editing, JSON export |
 | `tracker.html` | Full pattern editor with per-cell note/velocity/length editing and JSON export |

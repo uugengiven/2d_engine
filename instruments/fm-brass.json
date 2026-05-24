@@ -1,0 +1,53 @@
+{
+  "type": "fm",
+  "name": "FM Brass",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 1.8,
+      "feedback": 0.5,
+      "envelope": {
+        "attack":  0.04,
+        "decay":   0.1,
+        "sustain": 0.75,
+        "decay2":  0,
+        "release": 0.06
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 7,
+      "level": 0.9,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.06,
+        "decay":   0.15,
+        "sustain": 0.65,
+        "decay2":  0,
+        "release": 0.08
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1]
+  ],
+
+  "lfos": [
+    {
+      "target":   "pitch",
+      "waveform": "sine",
+      "rate":     5.5,
+      "depth":    0.12,
+      "delay":    0.2
+    }
+  ]
+}

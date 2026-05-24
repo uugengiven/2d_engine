@@ -1,0 +1,58 @@
+{
+  "type": "fm",
+  "name": "FM Electric Piano",
+  "version": "1.0",
+
+  "voices": 6,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 14.0,
+      "detune": 0,
+      "level": 0.4,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.02,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.02
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 0.5,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.5,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.1
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 5,
+      "level": 0.5,
+      "feedback": 0.1,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   1.2,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.15
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1]
+  ],
+
+  "lfos": []
+}

@@ -16,6 +16,13 @@
  *   { type:'voiceDone', voiceId }   — release tail has finished
  */
 
+// ── sine lookup table — built once at load, reused every sample ──────────────
+const _SIN_N    = 4096;
+const _SIN_MASK = _SIN_N - 1;
+const _RAD_TO_I = _SIN_N / (2 * Math.PI);
+const _SIN_TAB  = new Float32Array(_SIN_N);
+for (let i = 0; i < _SIN_N; i++) _SIN_TAB[i] = Math.sin(2 * Math.PI * i / _SIN_N);
+
 // ── free functions (no closure overhead in the hot path) ─────────────────────
 
 function gainAtElapsed(elapsed, env, velocity) {
@@ -67,7 +74,12 @@ class SynthProcessor extends AudioWorkletProcessor {
             startFrame:      0,
             releaseFrame:    -1,
             releaseEndFrame: -1,
+            declickEndFrame: -1,
             gainAtRelease:   0,
+            lastAmpL:        0,
+            lastAmpR:        0,
+            ghostAmpL:       0,
+            ghostAmpR:       0,
             velocity:        0,
             envelope:        {},
             pan:             0,
@@ -128,7 +140,16 @@ class SynthProcessor extends AudioWorkletProcessor {
 
     _killVoice({ voiceId }) {
         const v = this._voices[voiceId];
-        if (v) v.active = false;
+        if (!v?.active) return;
+        if (v.declickEndFrame > currentFrame) {
+            const pct = (v.declickEndFrame - currentFrame) / 64;
+            v.ghostAmpL = v.lastAmpL + v.ghostAmpL * pct;
+            v.ghostAmpR = v.lastAmpR + v.ghostAmpR * pct;
+        } else {
+            v.ghostAmpL = v.lastAmpL;
+            v.ghostAmpR = v.lastAmpR;
+        }
+        v.declickEndFrame = currentFrame + 64;
     }
 
     _allNotesOff({ when }) {
@@ -162,7 +183,20 @@ class SynthProcessor extends AudioWorkletProcessor {
 
             for (let vi = 0; vi < this._voices.length; vi++) {
                 const v = this._voices[vi];
-                if (!v.active || frame < v.startFrame) continue;
+                if (!v.active) continue;
+
+                // ── ghost declick — additive, independent of new note ──
+                if (v.declickEndFrame >= 0) {
+                    if (frame < v.declickEndFrame) {
+                        const mult = (v.declickEndFrame - frame) / 64;
+                        sL += v.ghostAmpL * mult;
+                        sR += v.ghostAmpR * mult;
+                    } else {
+                        v.declickEndFrame = -1;
+                    }
+                }
+
+                if (frame < v.startFrame) continue;
 
                 // ── release-complete check ──
                 if (v.releaseEndFrame >= 0 && frame >= v.releaseEndFrame) {
@@ -190,7 +224,14 @@ class SynthProcessor extends AudioWorkletProcessor {
                     lfo.phase = (lfo.phase + lfo.rate / sr) % 1;
                     const postDelay = (frame - lfo.startFrame) / sr;
                     const fadeGain  = Math.min(1, postDelay / 0.05); // 50 ms fade-in
-                    const lfoVal    = Math.sin(2 * Math.PI * lfo.phase) * lfo.depth * fadeGain;
+                    let lfoRaw;
+                    switch (lfo.waveform) {
+                        case 'square':   lfoRaw = lfo.phase < 0.5 ? 1 : -1; break;
+                        case 'triangle': lfoRaw = lfo.phase < 0.5 ? 4*lfo.phase - 1 : 3 - 4*lfo.phase; break;
+                        case 'sawtooth': lfoRaw = 2*lfo.phase - 1; break;
+                        default:         lfoRaw = _SIN_TAB[(lfo.phase * _SIN_N | 0) & _SIN_MASK]; break;
+                    }
+                    const lfoVal    = lfoRaw * lfo.depth * fadeGain;
                     if (lfo.target === 'pitch')  pitchSemitones += lfoVal;
                     else if (lfo.target === 'volume') ampMod += lfoVal;
                 }
@@ -222,7 +263,7 @@ class SynthProcessor extends AudioWorkletProcessor {
                             case 'square':   s = p < osc.dutyCycle ? 1 : -1;          break;
                             case 'triangle': s = p < 0.5 ? 4*p - 1 : 3 - 4*p;        break;
                             case 'sawtooth': s = 2*p - 1;                             break;
-                            case 'sine':     s = Math.sin(2 * Math.PI * p);           break;
+                            case 'sine':     s = _SIN_TAB[(p * _SIN_N | 0) & _SIN_MASK]; break;
                             default:         s = 0;
                         }
                     }
@@ -233,8 +274,12 @@ class SynthProcessor extends AudioWorkletProcessor {
                 // ── pan + accumulate ──
                 const amp   = oscMix * envGain * ampMod;
                 const angle = ((v.pan + 1) * 0.5) * (Math.PI * 0.5);
-                sL += amp * Math.cos(angle);
-                sR += amp * Math.sin(angle);
+                const thisL = amp * Math.cos(angle);
+                const thisR = amp * Math.sin(angle);
+                sL += thisL;
+                sR += thisR;
+                v.lastAmpL = thisL;
+                v.lastAmpR = thisR;
             }
 
             L[i] = sL;

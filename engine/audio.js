@@ -1,4 +1,5 @@
 import { OscSynth } from './synth.js';
+import { FmSynth }  from './fm-synth.js';
 
 function generateIR(context, duration = 2.0, decay = 2.0) {
     const length = Math.ceil(context.sampleRate * duration);
@@ -276,6 +277,7 @@ export class AudioManager {
     /** @type {DynamicsCompressorNode|null} */ #masterCompressor = null;
     /** @type {GainNode|null} */ #masterGain = null;
     #workletLoaded = false;
+    #fmWorkletLoaded = false;
 
     #ensureContext() {
         if (this.#context) return;
@@ -355,15 +357,45 @@ export class AudioManager {
         }
     }
 
+    async loadFmWorklet(moduleUrl = './engine/fm-worklet.js') {
+        this.#ensureContext();
+        if (!this.#fmWorkletLoaded) {
+            await this.#context.audioWorklet.addModule(moduleUrl);
+            this.#fmWorkletLoaded = true;
+        }
+    }
+
+    /**
+     * Load an instrument definition from a JSON file. Returns OscSynth or FmSynth
+     * depending on the `type` field in the JSON ("osc" or "fm").
+     * @param {string} url
+     * @param {{ channel?: string, voices?: number }} [options]
+     * @returns {Promise<OscSynth|FmSynth>}
+     */
     async loadInstrument(url, options = {}) {
         this.#ensureContext();
-        await this.loadSynthWorklet();
         const response = await fetch(url);
         const def = await response.json();
         const ch = options.channel
             ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
             : this.#defaultChannel;
+        if (def.type === 'fm') {
+            await this.loadFmWorklet();
+            return new FmSynth(this.#context, ch, def, { voices: options.voices });
+        }
+        await this.loadSynthWorklet();
         return new OscSynth(this.#context, ch, def, { voices: options.voices });
+    }
+
+    async loadFmInstrument(url, options = {}) {
+        this.#ensureContext();
+        await this.loadFmWorklet();
+        const response = await fetch(url);
+        const def = await response.json();
+        const ch = options.channel
+            ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
+            : this.#defaultChannel;
+        return new FmSynth(this.#context, ch, def, { voices: options.voices });
     }
 
     /**
