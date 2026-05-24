@@ -41,6 +41,8 @@
     [0, 1]
   ],
 
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
   "lfos": [
     {
       "target":   "pitch",

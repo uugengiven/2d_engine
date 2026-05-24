@@ -1,6 +1,7 @@
 export class FmSynth {
     /** @type {AudioContext} */      #ctx;
     /** @type {AudioWorkletNode} */  #workletNode;
+    /** @type {BiquadFilterNode} */  #filterNode;
     #def;
     #voices = [];
     #seq = 0;
@@ -35,7 +36,15 @@ export class FmSynth {
             numberOfOutputs:    1,
             outputChannelCount: [2],
         });
-        this.#workletNode.connect(channel.inputNode);
+
+        const fDef = definition.filter ?? {};
+        this.#filterNode = ctx.createBiquadFilter();
+        this.#filterNode.type            = fDef.type      ?? 'allpass';
+        this.#filterNode.frequency.value = fDef.frequency ?? 20000;
+        this.#filterNode.Q.value         = fDef.Q         ?? 1;
+
+        this.#workletNode.connect(this.#filterNode);
+        this.#filterNode.connect(channel.inputNode);
 
         this.#post({ type: 'init', voiceCount: poolSize });
 
@@ -96,10 +105,19 @@ export class FmSynth {
         this.#releaseVoice(voice, null);
     }
 
+    setFilter({ type, frequency, Q } = {}) {
+        const f   = this.#filterNode;
+        const now = this.#ctx.currentTime;
+        if (type      != null) f.type = type;
+        if (frequency != null) f.frequency.setValueAtTime(frequency, now);
+        if (Q         != null) f.Q.setValueAtTime(Q, now);
+    }
+
     dispose() {
         this.allNotesOff();
         this.#post({ type: 'dispose' });
         this.#workletNode.disconnect();
+        this.#filterNode.disconnect();
     }
 
     allNotesOff() {

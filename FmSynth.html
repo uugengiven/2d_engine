@@ -75,6 +75,22 @@
       color: #6ab8f0;
       min-width: 36px;
       text-align: right;
+      cursor: text;
+      border-radius: 2px;
+      padding: 1px 3px;
+      transition: background 0.1s;
+    }
+    .val:hover { background: #161828; }
+    .val-input {
+      width: 56px;
+      background: #111120;
+      border: 1px solid #6ab8f0;
+      color: #6ab8f0;
+      font-family: inherit;
+      font-size: 0.75rem;
+      padding: 1px 4px;
+      border-radius: 2px;
+      text-align: right;
     }
 
     button {
@@ -257,6 +273,34 @@
       padding: 3px 6px;
     }
 
+    /* ── tooltips ── */
+    [data-tip] {
+      position: relative;
+      cursor: help;
+      text-decoration: underline dotted #3a5070;
+      text-underline-offset: 3px;
+    }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      width: 230px;
+      background: #111828;
+      border: 1px solid #3a5070;
+      color: #8ab0cc;
+      font-size: 0.65rem;
+      line-height: 1.55;
+      padding: 7px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+      white-space: normal;
+      opacity: 0;
+      transition: opacity 0.12s;
+      z-index: 200;
+    }
+    [data-tip]:hover::after { opacity: 1; }
+
     /* ── keyboard ── */
     .kb-label {
       font-size: 0.65rem;
@@ -398,6 +442,10 @@
   <!-- ── LFO editors ── -->
   <h2 style="margin-top:20px">LFOs</h2>
   <div class="editor" id="lfo-editor"></div>
+
+  <!-- ── output filter ── -->
+  <h2 style="margin-top:20px">Output Filter</h2>
+  <div class="panel" id="filter-panel" style="max-width:420px"></div>
 
   <!-- ── keyboard ── -->
   <div class="kb-label">Keyboard &nbsp;·&nbsp; C3 – C7</div>
@@ -558,17 +606,26 @@
 
     // ── operator editor UI ────────────────────────────────────────────────────
     const OP_PARAMS = [
-      { key: 'ratio',    label: 'Ratio',    min: 0.25, max: 16,  step: 0.01, fmt: v => v.toFixed(2) },
-      { key: 'detune',   label: 'Detune',   min: -100, max: 100, step: 1,    fmt: v => (v > 0 ? '+' : '') + v },
-      { key: 'level',    label: 'Level',    min: 0,    max: 8,   step: 0.01, fmt: v => v.toFixed(2) },
-      { key: 'feedback', label: 'Feedback', min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
+      { key: 'ratio',    label: 'Ratio',    min: 0.25, max: 16,  step: 0.01, fmt: v => v.toFixed(2),
+        tip: 'Frequency multiplier relative to the note pitch. Whole numbers (1, 2, 3…) give harmonic tones; fractional values (1.5, 3.5…) give inharmonic, bell-like timbres.' },
+      { key: 'detune',   label: 'Detune',   min: -100, max: 100, step: 1,    fmt: v => (v > 0 ? '+' : '') + v,
+        tip: 'Fine pitch offset in cents (100 cents = 1 semitone). Small values on parallel operators create chorus-like thickening.' },
+      { key: 'level',    label: 'Level',    min: 0,    max: 8,   step: 0.01, fmt: v => v.toFixed(2),
+        tip: 'Output amplitude. On a modulator, higher = more intense modulation = brighter/more complex tone. On a carrier, controls loudness.' },
+      { key: 'feedback', label: 'Feedback', min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2),
+        tip: 'Self-modulation — feeds the operator\'s own output back as phase input. Low values add odd harmonics; high values create buzzy or noise-like tones.' },
     ];
     const ENV_PARAMS = [
-      { key: 'attack',  label: 'Attack',  min: 0.001, max: 2,   step: 0.001, fmt: v => v.toFixed(3) },
-      { key: 'decay',   label: 'Decay',   min: 0.001, max: 4,   step: 0.001, fmt: v => v.toFixed(3) },
-      { key: 'sustain', label: 'Sustain', min: 0,     max: 1,   step: 0.01,  fmt: v => v.toFixed(2) },
-      { key: 'decay2',  label: 'Decay2',  min: 0,     max: 4,   step: 0.01,  fmt: v => v.toFixed(2) },
-      { key: 'release', label: 'Release', min: 0.001, max: 4,   step: 0.001, fmt: v => v.toFixed(3) },
+      { key: 'attack',  label: 'Attack',  min: 0.001, max: 2,   step: 0.001, fmt: v => v.toFixed(3),
+        tip: 'Time from note start to peak amplitude, in seconds.' },
+      { key: 'decay',   label: 'Decay',   min: 0.001, max: 4,   step: 0.001, fmt: v => v.toFixed(3),
+        tip: 'Time to fall from peak down to the sustain level, in seconds.' },
+      { key: 'sustain', label: 'Sustain', min: 0,     max: 1,   step: 0.01,  fmt: v => v.toFixed(2),
+        tip: 'Level held while the key is down. 0 = silent after decay, 1 = stays at full velocity level.' },
+      { key: 'decay2',  label: 'Decay2',  min: 0,     max: 4,   step: 0.01,  fmt: v => v.toFixed(2),
+        tip: 'Slow exponential fade during sustain — simulates acoustic instruments that keep decaying even while held. 0 = off.' },
+      { key: 'release', label: 'Release', min: 0.001, max: 4,   step: 0.001, fmt: v => v.toFixed(3),
+        tip: 'Time to fade to silence after the key is released, in seconds.' },
     ];
 
     function makeSlider(paramDef, getValue, setValue) {
@@ -577,22 +634,57 @@
 
       const lbl = document.createElement('label');
       lbl.textContent = paramDef.label;
+      if (paramDef.tip) lbl.dataset.tip = paramDef.tip;
+
+      // log-scale support: slider operates 0–1000 internally, maps to min–max exponentially
+      const log      = !!paramDef.log;
+      const logRatio = log ? Math.log(paramDef.max / paramDef.min) : 1;
+      const toSlider   = log ? v => Math.round(Math.log(v / paramDef.min) / logRatio * 1000) : v => v;
+      const fromSlider = log ? s => paramDef.min * Math.exp((s / 1000) * logRatio)            : s => parseFloat(s);
 
       const slider = document.createElement('input');
       slider.type  = 'range';
-      slider.min   = paramDef.min;
-      slider.max   = paramDef.max;
-      slider.step  = paramDef.step;
-      slider.value = getValue();
+      slider.min   = log ? 0    : paramDef.min;
+      slider.max   = log ? 1000 : paramDef.max;
+      slider.step  = log ? 1    : paramDef.step;
+      slider.value = toSlider(getValue());
 
       const valEl = document.createElement('span');
       valEl.className = 'val';
       valEl.textContent = paramDef.fmt(getValue());
 
       slider.addEventListener('input', () => {
-        const v = parseFloat(slider.value);
+        const v = fromSlider(parseFloat(slider.value));
         setValue(v);
         valEl.textContent = paramDef.fmt(v);
+      });
+
+      valEl.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'val-input';
+        input.value = getValue();
+        input.min = paramDef.min;
+        input.max = paramDef.max;
+        input.step = paramDef.step;
+        valEl.textContent = '';
+        valEl.appendChild(input);
+        input.focus();
+        input.select();
+        let cancelled = false;
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter')  { input.blur(); }
+          if (e.key === 'Escape') { cancelled = true; input.blur(); }
+        });
+        input.addEventListener('blur', () => {
+          if (cancelled) { valEl.textContent = paramDef.fmt(getValue()); return; }
+          let v = parseFloat(input.value);
+          if (isNaN(v)) v = getValue();
+          v = Math.min(paramDef.max, Math.max(paramDef.min, v));
+          setValue(v);
+          slider.value = toSlider(v);
+          valEl.textContent = paramDef.fmt(v);
+        });
       });
 
       row.appendChild(lbl);
@@ -603,13 +695,18 @@
 
     function buildLfoTargets(opCount) {
       const t = [
-        { value: 'pitch',  label: 'Pitch (vibrato)',  depthMax: 12, depthStep: 0.1  },
-        { value: 'volume', label: 'Volume (tremolo)', depthMax: 2,  depthStep: 0.01 },
+        { value: 'pitch',  label: 'Pitch (vibrato)',  depthMax: 12, depthStep: 0.1,
+          tip: 'Vibrato — shifts all operators\' frequencies together by the same amount, preserving timbre.' },
+        { value: 'volume', label: 'Volume (tremolo)', depthMax: 2,  depthStep: 0.01,
+          tip: 'Tremolo — pulses the overall output amplitude.' },
       ];
       for (let i = 0; i < opCount; i++) {
-        t.push({ value: `op${i}.level`,    label: `Op ${i} · Level`,    depthMax: 4,  depthStep: 0.01 });
-        t.push({ value: `op${i}.ratio`,    label: `Op ${i} · Ratio`,    depthMax: 12, depthStep: 0.1  });
-        t.push({ value: `op${i}.feedback`, label: `Op ${i} · Feedback`, depthMax: 1,  depthStep: 0.01 });
+        t.push({ value: `op${i}.level`,    label: `Op ${i} · Level`,    depthMax: 4,  depthStep: 0.01,
+          tip: `Pulses Op ${i}'s output level. On a modulator this creates rhythmic timbral changes; on a carrier it's amplitude tremolo for that voice alone.` });
+        t.push({ value: `op${i}.ratio`,    label: `Op ${i} · Ratio`,    depthMax: 12, depthStep: 0.1,
+          tip: `Modulates Op ${i}'s frequency. On a carrier = vibrato on that partial. On a modulator = spectral sweep that shifts timbre without necessarily changing perceived pitch.` });
+        t.push({ value: `op${i}.feedback`, label: `Op ${i} · Feedback`, depthMax: 1,  depthStep: 0.01,
+          tip: `Modulates Op ${i}'s self-feedback depth, creating evolving harmonic complexity and growl.` });
       }
       return t;
     }
@@ -762,10 +859,12 @@
         targetRow.className = 'param-row';
         const targetLbl = document.createElement('label');
         targetLbl.textContent = 'Target';
+        targetLbl.dataset.tip = 'Which parameter this LFO modulates. Hover each option in the list for a description.';
         const targetSel = document.createElement('select');
         for (const t of targets) {
           const opt = document.createElement('option');
           opt.value = t.value; opt.textContent = t.label;
+          if (t.tip) opt.title = t.tip;
           if (t.value === (lfo.target ?? 'pitch')) opt.selected = true;
           targetSel.appendChild(opt);
         }
@@ -777,6 +876,7 @@
         waveRow.className = 'param-row';
         const waveLbl = document.createElement('label');
         waveLbl.textContent = 'Waveform';
+        waveLbl.dataset.tip = 'Shape of the LFO oscillation. Sine = smooth, Square = abrupt on/off, Triangle = linear ramp, Sawtooth = one-way sweep.';
         const waveSel = document.createElement('select');
         for (const w of ['sine', 'square', 'triangle', 'sawtooth']) {
           const opt = document.createElement('option');
@@ -790,7 +890,8 @@
 
         // rate
         panel.appendChild(makeSlider(
-          { label: 'Rate',  min: 0.1, max: 20, step: 0.1,  fmt: v => v.toFixed(1) + ' Hz' },
+          { label: 'Rate',  min: 0.1, max: 20, step: 0.1,  fmt: v => v.toFixed(1) + ' Hz',
+            tip: 'LFO speed in cycles per second. 0.1 = slow sweep, 5–8 = typical vibrato/tremolo.' },
           () => lfo.rate  ?? 5,
           v  => { lfo.rate  = v; }
         ));
@@ -798,7 +899,8 @@
         // depth — range is context-sensitive to target
         const curTgt   = targets.find(t => t.value === (lfo.target ?? 'pitch')) ?? targets[0];
         const depthRow = makeSlider(
-          { label: 'Depth', min: 0, max: curTgt.depthMax, step: curTgt.depthStep, fmt: v => v.toFixed(2) },
+          { label: 'Depth', min: 0, max: curTgt.depthMax, step: curTgt.depthStep, fmt: v => v.toFixed(2),
+            tip: 'Intensity of the effect. Units depend on target: semitones for pitch/ratio, amplitude multiplier for volume/level, raw amount for feedback.' },
           () => lfo.depth ?? 0.5,
           v  => { lfo.depth = v; }
         );
@@ -808,7 +910,8 @@
 
         // delay
         panel.appendChild(makeSlider(
-          { label: 'Delay', min: 0, max: 4, step: 0.01, fmt: v => v.toFixed(2) + ' s' },
+          { label: 'Delay', min: 0, max: 4, step: 0.01, fmt: v => v.toFixed(2) + ' s',
+            tip: 'Seconds before the LFO fades in after the note starts. Useful for delayed vibrato that kicks in after the initial attack.' },
           () => lfo.delay ?? 0,
           v  => { lfo.delay = v; }
         ));
@@ -851,7 +954,58 @@
       for (let oi = 0; oi < t.ops; oi++) {
         if (!modSrcs.has(oi)) def.algorithm.push([oi, -1]);
       }
+      def.lfos = [];
       loadInstrumentUI(activeIdx);
+    }
+
+    const FILTER_TYPES = [
+      { value: 'allpass',  label: 'Off (allpass)',  tip: 'Passes all frequencies unchanged — filter is effectively bypassed.' },
+      { value: 'lowpass',  label: 'Low Pass',       tip: 'Passes frequencies below the cutoff, rolls off higher ones. Great for darkening or removing harshness.' },
+      { value: 'highpass', label: 'High Pass',       tip: 'Passes frequencies above the cutoff, rolls off lower ones. Useful for thinning out a bass-heavy sound.' },
+      { value: 'bandpass', label: 'Band Pass',       tip: 'Passes a band of frequencies around the cutoff, attenuates everything else. Q controls the width of the band.' },
+      { value: 'notch',    label: 'Notch',           tip: 'Cuts a narrow band of frequencies around the cutoff, passes everything else. Useful for removing a specific resonance.' },
+    ];
+
+    function buildFilterEditor(def) {
+      const container = document.getElementById('filter-panel');
+      container.innerHTML = '';
+      if (!def.filter) def.filter = { type: 'allpass', frequency: 20000, Q: 1 };
+      const flt = def.filter;
+
+      const typeRow = document.createElement('div');
+      typeRow.className = 'param-row';
+      const typeLbl = document.createElement('label');
+      typeLbl.textContent = 'Type';
+      typeLbl.dataset.tip = 'Filter topology. Each shape attenuates different frequency regions.';
+      const typeSel = document.createElement('select');
+      for (const t of FILTER_TYPES) {
+        const opt = document.createElement('option');
+        opt.value = t.value; opt.textContent = t.label; opt.title = t.tip;
+        if (t.value === (flt.type ?? 'allpass')) opt.selected = true;
+        typeSel.appendChild(opt);
+      }
+      typeSel.addEventListener('change', () => {
+        flt.type = typeSel.value;
+        instruments[activeIdx]?.setFilter({ type: flt.type });
+      });
+      typeRow.append(typeLbl, typeSel);
+      container.appendChild(typeRow);
+
+      container.appendChild(makeSlider(
+        { label: 'Frequency', min: 20, max: 20000, step: 1, log: true,
+          fmt: v => Math.round(v) + ' Hz',
+          tip: 'Cutoff frequency. The filter effect is centered here. Logarithmic scale — small movements at the left are fine adjustments in the low range.' },
+        () => flt.frequency ?? 20000,
+        v  => { flt.frequency = v; instruments[activeIdx]?.setFilter({ frequency: v }); }
+      ));
+
+      container.appendChild(makeSlider(
+        { label: 'Q', min: 0.1, max: 20, step: 0.1,
+          fmt: v => v.toFixed(1),
+          tip: 'Resonance / quality factor. Higher values create a pronounced peak at the cutoff frequency. At extreme values some filter types will self-oscillate.' },
+        () => flt.Q ?? 1,
+        v  => { flt.Q = v; instruments[activeIdx]?.setFilter({ Q: v }); }
+      ));
     }
 
     function loadInstrumentUI(idx) {
@@ -859,6 +1013,7 @@
       const def = instDefs[idx];
       refreshDiagram(def);
       buildOpEditor(def);
+      buildFilterEditor(def);
     }
 
     // ── rebuild FmSynth from edited def ──────────────────────────────────────
