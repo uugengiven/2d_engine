@@ -210,6 +210,54 @@
     .note-name { color: #6ab8f0; min-width: 3ch; display: inline-block; }
     .cell-vel  { color: #7aaa7a; margin-left: 6px; min-width: 2ch; display: inline-block; }
     .cell-len  { color: #8888aa; margin-left: 6px; }
+    .cell-ic   { color: #e0a040; font-size: 0.62rem; margin-right: 4px;
+                 border: 1px solid #604010; border-radius: 2px; padding: 0 2px; }
+
+    /* ── context menu ── */
+    #ctx-menu {
+      display: none;
+      position: fixed;
+      z-index: 2000;
+      background: #12121e;
+      border: 1px solid #2e3a50;
+      border-radius: 4px;
+      padding: 4px 0;
+      min-width: 200px;
+      box-shadow: 0 6px 20px #0009;
+      font-size: 0.78rem;
+    }
+    .ctx-label {
+      color: #566880;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 12px 2px;
+    }
+    #ctx-inst-sel {
+      display: block;
+      width: calc(100% - 24px);
+      margin: 4px 12px;
+      background: #0e0e1a;
+      color: #c0cce0;
+      border: 1px solid #2e3a50;
+      border-radius: 3px;
+      padding: 3px 5px;
+      font-size: 0.78rem;
+    }
+    .ctx-sep { border-top: 1px solid #1e2438; margin: 4px 0; }
+    .ctx-btn {
+      display: block;
+      width: 100%;
+      background: none;
+      border: none;
+      color: #c0cce0;
+      text-align: left;
+      padding: 5px 12px;
+      cursor: pointer;
+      font-size: 0.78rem;
+    }
+    .ctx-btn:hover { background: #1e2a3e; }
+    .ctx-btn.danger { color: #e06a6a; }
 
     /* ── bottom bar ── */
     .bottom-bar {
@@ -412,7 +460,8 @@
       'instruments/nes-noise.json',
       'instruments/fat-triangle.json',
     ];
-    const INST_NAMES = ['Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Triangle'];
+    const INST_NAMES  = ['Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Triangle'];
+    const INST_SHORT  = ['P25', 'P50', 'TRI', 'NOI', 'FAT'];
 
     const NOTE_NAMES   = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     const KEY_SEMITONE = { z:0,s:1,x:2,d:3,c:4,v:5,g:6,b:7,h:8,n:9,j:10,m:11 };
@@ -475,6 +524,8 @@
       tracks.push({ id, name, instIdx, voices, muted: false, inst: createTrackInst(instIdx, voices) });
       for (const p of patterns) {
         if (!p.cells[id]) p.cells[id] = Array(512).fill(null);
+        // Row 0 always carries a program-change so the instrument resets on every loop.
+        p.cells[id][0] = { ...(p.cells[id][0] ?? {}), instIdx };
       }
       return id;
     }
@@ -586,7 +637,7 @@
     [DEMO.lead, DEMO.bass, DEMO.perc].forEach((evts, ti) => {
       const cells = patterns[0].cells[tracks[ti].id];
       evts.forEach(([row, note, velocity, length]) => {
-        cells[row] = { note, velocity, length };
+        cells[row] = { ...(cells[row] ?? {}), note, velocity, length };
       });
     });
 
@@ -607,8 +658,16 @@
 
     function cellHTML(cell) {
       if (!cell) return '<span class="empty">· · ·</span>';
+      const ic = cell.instIdx != null
+        ? `<span class="cell-ic" title="→ ${INST_NAMES[cell.instIdx] ?? '?'}">${INST_SHORT[cell.instIdx] ?? '?'}</span>`
+        : '';
+      if (cell.note == null) {
+        // Program-change only — no note plays
+        return ic + '<span class="empty">───</span>';
+      }
       const vel = Math.round(cell.velocity * 99).toString().padStart(2, '0');
-      return `<span class="note-name">${midiToName(cell.note).padEnd(3)}</span>`
+      return ic
+           + `<span class="note-name">${midiToName(cell.note).padEnd(3)}</span>`
            + `<span class="cell-vel">${vel}</span>`
            + `<span class="cell-len"> ${cell.length}</span>`;
     }
@@ -710,7 +769,12 @@
     }
 
     function setCell(t, r, cell) {
-      patterns[currentPatternIdx].cells[tracks[t].id][r] = cell;
+      const existing = patterns[currentPatternIdx].cells[tracks[t].id][r];
+      // Preserve any program-change that was already on this cell
+      patterns[currentPatternIdx].cells[tracks[t].id][r] =
+        (existing?.instIdx != null && cell.instIdx == null)
+          ? { instIdx: existing.instIdx, ...cell }
+          : cell;
       updateCellEl(t, r);
       if (selected?.t === t && selected?.r === r) updateEditor();
     }
@@ -816,6 +880,12 @@
         // Reflect new default voice count in the header input
         const vin = document.querySelector(`.voice-in[data-t="${t}"]`);
         if (vin) vin.value = track.voices;
+        // Auto-set row 0 program-change so the instrument resets correctly on loop
+        const cells = patterns[currentPatternIdx].cells[track.id];
+        if (cells) {
+          cells[0] = { ...(cells[0] ?? {}), instIdx: newInstIdx };
+          updateCellEl(t, 0);
+        }
       }
 
       if (e.target.classList.contains('voice-in')) {
@@ -936,12 +1006,23 @@
         length: patternLength,
         tracks: tracks
           .filter(tr => !tr.muted)
-          .map(tr => ({
+          .map((tr, idx) => ({
             id: tr.id,
             instrument: tr.inst,
+            onInstrumentChange: (newInstIdx) => {
+              swapTrackInstrument(idx, newInstIdx);
+              setTimeout(() => buildGrid(), 0);
+              return tracks[idx].inst;
+            },
             events: (pcells[tr.id] ?? [])
               .slice(0, patternLength)
-              .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
+              .map((cell, row) => {
+                if (!cell) return null;
+                if (cell.note == null) return cell.instIdx != null ? { row, instIdx: cell.instIdx } : null;
+                const ev = { row, note: cell.note, velocity: cell.velocity, length: cell.length };
+                if (cell.instIdx != null) ev.instIdx = cell.instIdx;
+                return ev;
+              })
               .filter(Boolean),
           })),
       };
@@ -972,18 +1053,33 @@
     // ── export ────────────────────────────────────────────────────────────────
     function buildExportJSON() {
       const pcells = patterns[currentPatternIdx].cells;
-      return JSON.stringify({
-        ticksPerBeat,
-        length: patternLength,
-        tracks: tracks.map(tr => ({
+      const trackOut = tracks.map(tr => {
+        const events = [];
+        const programChanges = [];
+        (pcells[tr.id] ?? []).slice(0, patternLength).forEach((cell, row) => {
+          if (!cell) return;
+          if (cell.note == null) {
+            if (cell.instIdx != null) programChanges.push([row, cell.instIdx]);
+          } else {
+            const ev = [row, cell.note, cell.velocity, cell.length];
+            if (cell.instIdx != null) ev.push(cell.instIdx);
+            events.push(ev);
+          }
+        });
+        const t = {
           id: tr.name.toLowerCase().replace(/\s+/g, '-'),
           name: tr.name,
           instrumentUrl: INST_URLS[tr.instIdx],
-          events: (pcells[tr.id] ?? [])
-            .slice(0, patternLength)
-            .map((cell, row) => cell ? { row, note: cell.note, velocity: cell.velocity, length: cell.length } : null)
-            .filter(Boolean),
-        })),
+          events,
+        };
+        if (programChanges.length) t.programChanges = programChanges;
+        return t;
+      });
+      return JSON.stringify({
+        ticksPerBeat,
+        length: patternLength,
+        eventFields: ['row', 'note', 'velocity', 'length'],
+        tracks: trackOut,
       }, null, 2);
     }
 
@@ -1244,13 +1340,15 @@
 
           const cells = {};
           result.tracks.forEach((mt, ti) => {
-            const id   = midiTrackIds[ti];
-            const carr = Array(rowsPerChunk).fill(null);
+            const id      = midiTrackIds[ti];
+            const instIdx = channelToInstIdx(mt.channel, mt.isDrum);
+            const carr    = Array(rowsPerChunk).fill(null);
+            carr[0] = { instIdx }; // program-change at start so instrument resets on loop
             for (const ev of mt.events) {
               if (ev.row < chunkStart || ev.row >= chunkEnd) continue;
               const row    = ev.row - chunkStart;
               const length = Math.min(ev.length, rowsPerChunk - row);
-              carr[row] = { note: ev.note, velocity: ev.velocity, length };
+              carr[row] = { ...(carr[row] ?? {}), note: ev.note, velocity: ev.velocity, length };
             }
             cells[id] = carr;
           });
@@ -1290,6 +1388,86 @@
       }
     });
 
+    // ── context menu ─────────────────────────────────────────────────────────
+    const ctxMenu     = document.getElementById('ctx-menu');
+    const ctxInstSel  = document.getElementById('ctx-inst-sel');
+    let ctxTarget = null; // { t, r }
+
+    // Populate instrument options once
+    INST_NAMES.forEach((name, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = name;
+      ctxInstSel.appendChild(opt);
+    });
+
+    function showCtxMenu(x, y, t, r) {
+      ctxTarget = { t, r };
+      const cell = (patterns[currentPatternIdx].cells[tracks[t].id] ?? [])[r];
+      document.getElementById('ctx-clear-inst').style.display = cell?.instIdx != null ? '' : 'none';
+      ctxInstSel.value = cell?.instIdx != null ? cell.instIdx : '';
+      ctxInstSel.disabled = false; // allow setting instIdx even on empty rows
+      // Keep menu on screen
+      const mx = Math.min(x, window.innerWidth  - 215);
+      const my = Math.min(y, window.innerHeight - 130);
+      ctxMenu.style.left    = mx + 'px';
+      ctxMenu.style.top     = my + 'px';
+      ctxMenu.style.display = 'block';
+    }
+
+    function hideCtxMenu() {
+      ctxMenu.style.display = 'none';
+      ctxTarget = null;
+    }
+
+    document.getElementById('grid-body').addEventListener('contextmenu', e => {
+      const td = e.target.closest('td.cell');
+      if (!td) return;
+      e.preventDefault();
+      selectCell(+td.dataset.t, +td.dataset.r);
+      showCtxMenu(e.clientX, e.clientY, +td.dataset.t, +td.dataset.r);
+    });
+
+    // Close on click outside
+    document.addEventListener('click', e => {
+      if (ctxTarget && !ctxMenu.contains(e.target)) hideCtxMenu();
+    });
+
+    ctxInstSel.addEventListener('change', e => {
+      if (!ctxTarget) return;
+      const { t, r } = ctxTarget;
+      const cells = patterns[currentPatternIdx].cells[tracks[t].id];
+      const cell  = cells?.[r];
+      const newIdx = e.target.value === '' ? null : +e.target.value;
+      if (newIdx == null) {
+        if (cell?.note != null) { const { instIdx, ...rest } = cell; cells[r] = rest; }
+        else cells[r] = null; // instIdx-only cell → clear entirely
+      } else {
+        cells[r] = cell ? { ...cell, instIdx: newIdx } : { instIdx: newIdx };
+      }
+      updateCellEl(t, r);
+      hideCtxMenu();
+    });
+
+    document.getElementById('ctx-clear-inst').addEventListener('click', () => {
+      if (!ctxTarget) return;
+      const { t, r } = ctxTarget;
+      const cells = patterns[currentPatternIdx].cells[tracks[t].id];
+      const cell  = cells?.[r];
+      if (cell) {
+        if (cell.note != null) { const { instIdx, ...rest } = cell; cells[r] = rest; }
+        else cells[r] = null; // instIdx-only → nothing left, clear the cell
+        updateCellEl(t, r);
+      }
+      hideCtxMenu();
+    });
+
+    document.getElementById('ctx-clear-cell').addEventListener('click', () => {
+      if (!ctxTarget) return;
+      clearCell(ctxTarget.t, ctxTarget.r);
+      hideCtxMenu();
+    });
+
     // ── init ──────────────────────────────────────────────────────────────────
     seq.bpm  = 160;
     seq.loop = true;
@@ -1297,5 +1475,15 @@
     buildPatternTabs();
     buildSongArrangement();
   </script>
+
+  <div id="ctx-menu">
+    <div class="ctx-label">Instrument change</div>
+    <select id="ctx-inst-sel">
+      <option value="">— none —</option>
+    </select>
+    <div class="ctx-sep"></div>
+    <button class="ctx-btn danger" id="ctx-clear-inst">Clear instrument change</button>
+    <button class="ctx-btn" id="ctx-clear-cell">Clear cell</button>
+  </div>
 </body>
 </html>

@@ -316,22 +316,161 @@ At 160 BPM with `ticksPerBeat: 4`:
 
 ### Pattern JSON file format (for saving/loading)
 
-When serialising a pattern to disk, replace the `instrument` instance reference with a URL:
+Events are stored as compact arrays to avoid repeating field names across thousands of notes. The top-level `eventFields` key declares the column order. An optional fifth element carries `instIdx` for mid-pattern instrument changes.
 
 ```json
 {
   "ticksPerBeat": 4,
   "length": 32,
+  "eventFields": ["row", "note", "velocity", "length"],
   "tracks": [
     {
       "id": "lead",
       "name": "Lead",
       "instrumentUrl": "instruments/nes-pulse-25.json",
+      "programChanges": [[0, 0]],
       "events": [
-        { "row": 0,  "note": 72, "velocity": 0.85, "length": 2 }
+        [0, 72, 0.85, 2],
+        [4, 76, 0.80, 1],
+        [16, 67, 0.75, 2, 1]
       ]
     }
   ]
+}
+```
+
+**`events`** — `[row, note, velocity, length]`, optional fifth element is `instIdx` (instrument swap simultaneous with the note).
+
+**`programChanges`** — `[[row, instIdx], ...]` for rows that change instrument without playing a note. Always present at row 0 so the instrument resets correctly when the pattern loops. Omitted if empty.
+
+---
+
+## Playing a Song from Game Code
+
+### Single pattern
+
+```js
+import { AudioManager } from './engine/audio.js';
+import { Sequencer }    from './engine/sequencer.js';
+
+const audio = new AudioManager();
+audio.createChannel('music', { volume: 0.8 });
+await audio.loadSynthWorklet();
+await audio.resume(); // must be called from a user gesture
+
+// Load pattern JSON
+const data = await fetch('patterns/level1.json').then(r => r.json());
+
+// Load each track's instrument
+const instruments = {};
+for (const track of data.tracks) {
+    instruments[track.id] = await audio.loadInstrument(
+        track.instrumentUrl, { channel: 'music' }
+    );
+}
+
+// Decode compact array events → Sequencer format
+function decodeTrack(track) {
+    const events = track.events.map(([row, note, velocity, length, instIdx]) => {
+        const ev = { row, note, velocity, length };
+        if (instIdx != null) ev.instIdx = instIdx;
+        return ev;
+    });
+    if (track.programChanges) {
+        for (const [row, instIdx] of track.programChanges) {
+            events.push({ row, instIdx });
+        }
+        events.sort((a, b) => a.row - b.row);
+    }
+    return events;
+}
+
+// Build and start
+const seq = new Sequencer(audio.context);
+seq.bpm  = 160;
+seq.loop = true;
+seq.setPattern({
+    ticksPerBeat: data.ticksPerBeat,
+    length:       data.length,
+    tracks: data.tracks.map(t => ({
+        id:         t.id,
+        instrument: instruments[t.id],
+        events:     decodeTrack(t),
+    })),
+});
+seq.start();
+```
+
+### Multi-pattern song arrangement
+
+```js
+// Load all patterns upfront
+const patternData = await Promise.all(
+    ['patterns/intro.json', 'patterns/loop.json', 'patterns/outro.json']
+        .map(url => fetch(url).then(r => r.json()))
+);
+
+// Instruments are song-level — loaded once, shared across all patterns
+const instruments = {};
+for (const data of patternData) {
+    for (const track of data.tracks) {
+        if (!instruments[track.id]) {
+            instruments[track.id] = await audio.loadInstrument(
+                track.instrumentUrl, { channel: 'music' }
+            );
+        }
+    }
+}
+
+// Build decoded Sequencer patterns
+const seqPatterns = patternData.map(data => ({
+    ticksPerBeat: data.ticksPerBeat,
+    length:       data.length,
+    tracks: data.tracks.map(t => ({
+        id:         t.id,
+        instrument: instruments[t.id],
+        events:     decodeTrack(t),
+    })),
+}));
+
+// Play arrangement: intro → loop (×3) → outro
+const arrangement = [0, 1, 1, 1, 2];
+let pos = 0;
+
+seq.bpm  = 160;
+seq.loop = true;
+seq.setPattern(seqPatterns[arrangement[pos]]);
+seq.start();
+
+seq.onLoopEnd = () => {
+    pos++;
+    if (pos >= arrangement.length) {
+        seq.onLoopEnd = null;
+        seq.stop();
+        return;
+    }
+    seq.setPattern(seqPatterns[arrangement[pos]]);
+    // Instruments stay alive across pattern switches — no audio gap.
+};
+```
+
+### Mid-song instrument swap (game events)
+
+To seamlessly change an instrument in response to a game event (e.g. tension → release):
+
+```js
+function swapInstrument(trackId, newUrl) {
+    const oldInst = instruments[trackId];
+    audio.loadInstrument(newUrl, { channel: 'music' }).then(newInst => {
+        instruments[trackId] = newInst;
+        // Update the live sequencer pattern to use the new instrument
+        const p = seq.currentPattern; // keep a reference to your active pattern object
+        const seqTrack = p.tracks.find(t => t.id === trackId);
+        if (seqTrack) seqTrack.instrument = newInst;
+        // Old instrument drains its release tail — dispose after envelope clears
+        oldInst.allNotesOff();
+        setTimeout(() => oldInst.dispose(), 500);
+    });
 }
 ```
 

@@ -47,8 +47,9 @@ export class Sequencer {
         this.#bpm = Math.max(1, Math.min(999, v));
     }
 
-    get running() { return this.#running; }
-    get currentRow() { return this.#currentRow; }
+    get running()        { return this.#running; }
+    get currentRow()     { return this.#currentRow; }
+    get currentPattern() { return this.#pattern; }
 
     /** @param {boolean} v */
     set loop(v) { this.#loop = v; }
@@ -143,18 +144,28 @@ export class Sequencer {
             for (const evt of track.events) {
                 if (evt.row !== row) continue;
 
-                // noteOn at the exact scheduled audio time
-                track.instrument.noteOn(evt.note, evt.velocity ?? 0.8, time);
+                // Instrument change fires first so the note plays on the new instrument.
+                // onInstrumentChange returns the new OscSynth so the track reference
+                // stays current for both this noteOn and any pending noteOffs.
+                if (evt.instIdx != null && track.onInstrumentChange) {
+                    const newInst = track.onInstrumentChange(evt.instIdx);
+                    if (newInst != null) track.instrument = newInst;
+                }
 
-                // Store noteOff for later dispatch, tagged with this note's start
-                // time so stale noteOffs (after voice stealing) can be ignored.
-                const noteOffTime = time + (evt.length ?? 1) * rowDur - 0.005;
-                this.#pendingNoteOffs.push({
-                    time: noteOffTime,
-                    instrument: track.instrument,
-                    note: evt.note,
-                    noteStartTime: time,
-                });
+                // noteOn at the exact scheduled audio time (skip for program-change-only rows)
+                if (evt.note != null) {
+                    track.instrument.noteOn(evt.note, evt.velocity ?? 0.8, time);
+
+                    // Store noteOff for later dispatch, tagged with this note's start
+                    // time so stale noteOffs (after voice stealing) can be ignored.
+                    const noteOffTime = time + (evt.length ?? 1) * rowDur - 0.005;
+                    this.#pendingNoteOffs.push({
+                        time: noteOffTime,
+                        instrument: track.instrument,
+                        note: evt.note,
+                        noteStartTime: time,
+                    });
+                }
             }
         }
 
