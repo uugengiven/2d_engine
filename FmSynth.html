@@ -390,10 +390,24 @@
     <div class="ctrl">
       <label>Instrument</label>
       <select id="inst-sel">
-        <option value="0">FM Bell</option>
-        <option value="1">FM Electric Piano</option>
-        <option value="2">FM Bass</option>
-        <option value="3">FM Brass</option>
+        <optgroup label="Classic FM">
+          <option value="0">FM Bell</option>
+          <option value="1">FM Electric Piano</option>
+          <option value="2">FM Bass</option>
+          <option value="3">FM Brass</option>
+        </optgroup>
+        <optgroup label="Genesis (YM2612)">
+          <option value="4">Gen Bass</option>
+          <option value="5">Gen Lead</option>
+          <option value="6">Gen Strings</option>
+          <option value="7">Gen Organ</option>
+        </optgroup>
+        <optgroup label="SNES / PSX">
+          <option value="8">SNES Piano</option>
+          <option value="9">SNES Strings</option>
+          <option value="10">SNES Flute</option>
+          <option value="11">SNES Choir</option>
+        </optgroup>
       </select>
     </div>
 
@@ -515,10 +529,18 @@
 
     // ── live instrument definitions (editable copies) ─────────────────────────
     const INST_URLS = [
-      'instruments/fm-bell.json',
-      'instruments/fm-electric-piano.json',
-      'instruments/fm-bass.json',
-      'instruments/fm-brass.json',
+      'instruments/fm-bell.json',           // 0
+      'instruments/fm-electric-piano.json', // 1
+      'instruments/fm-bass.json',           // 2
+      'instruments/fm-brass.json',          // 3
+      'instruments/genesis-bass.json',      // 4
+      'instruments/genesis-lead.json',      // 5
+      'instruments/genesis-strings.json',   // 6
+      'instruments/genesis-organ.json',     // 7
+      'instruments/snes-piano.json',        // 8
+      'instruments/snes-strings.json',      // 9
+      'instruments/snes-flute.json',        // 10
+      'instruments/snes-choir.json',        // 11
     ];
 
     let instDefs   = [];   // raw parsed JSON, one per instrument

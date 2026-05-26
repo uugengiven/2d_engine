@@ -194,3 +194,83 @@ fn fs_main(
     return vec4<f32>(color.rgb, alpha * color.a);
 }
 `;
+
+// Point vertex shader. No UV — points have no texture.
+export const POINT_VERTEX_SHADER = /* wgsl */`
+struct ScreenSize {
+    width: f32,
+    height: f32,
+};
+
+@group(0) @binding(0) var<uniform> screen: ScreenSize;
+
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+    @location(1) color:    vec4<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) color:       vec4<f32>,
+    @location(1) logical_pos: vec2<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let ndcX =  (in.position.x / screen.width)  * 2.0 - 1.0;
+    let ndcY = -(in.position.y / screen.height) * 2.0 + 1.0;
+    out.clip_position = vec4<f32>(ndcX, ndcY, 0.0, 1.0);
+    out.color = in.color;
+    out.logical_pos = in.position;
+    return out;
+}
+`;
+
+// Point fragment shader. Uses a hardcoded flat normal (0, 0, 1) — equivalent to a
+// surface facing directly at the camera — so points respond to lighting in the same
+// way a sprite with no normal map would. No texture bindings needed.
+export const POINT_FRAGMENT_SHADER = /* wgsl */`
+${LIGHT_PRELUDE}
+
+fn compute_lighting(color: vec4<f32>, logical_pos: vec2<f32>) -> vec4<f32> {
+    if (light_data.count == 0u) { return color; }
+
+    let normal = vec3<f32>(0.0, 0.0, 1.0);
+    var light_accum = vec3<f32>(0.0);
+
+    for (var i = 0u; i < light_data.count; i++) {
+        let light = light_data.lights[i];
+        let light_rgb = light.color.rgb * light.color.w;
+
+        if (light.kind == LIGHT_AMBIENT) {
+            light_accum += light_rgb;
+
+        } else if (light.kind == LIGHT_POINT) {
+            let delta = light.position - logical_pos;
+            let to_light = vec3<f32>(delta.x, -delta.y, light.height);
+            let dist = distance(logical_pos, light.position);
+            let t = clamp(dist / light.radius, 0.0, 1.0);
+            let atten = quantize(pow(1.0 - t, light.falloff), light.steps);
+            let light_dir = normalize(to_light);
+            let diffuse = quantize(max(dot(normal, light_dir), 0.0), light.steps);
+            light_accum += light_rgb * atten * diffuse;
+
+        } else if (light.kind == LIGHT_DIRECTIONAL) {
+            let light_dir = normalize(vec3<f32>(light.direction.x, -light.direction.y, 1.0));
+            let diffuse = quantize(max(dot(normal, light_dir), 0.0), light.steps);
+            light_accum += light_rgb * diffuse;
+        }
+    }
+
+    return vec4<f32>(color.rgb * light_accum, color.a);
+}
+
+@fragment
+fn fs_main(
+    @location(0) color:       vec4<f32>,
+    @location(1) logical_pos: vec2<f32>,
+) -> @location(0) vec4<f32> {
+    return compute_lighting(color, logical_pos);
+}
+`;

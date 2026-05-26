@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Collision Demo</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; gap: 10px; }
+        canvas { image-rendering: pixelated; }
+        #info { color: #888; font: 12px monospace; width: 960px; text-align: center; }
+        #controls { color: #aaa; font: 12px monospace; display: flex; align-items: center; gap: 14px; }
+        #controls input[type=range] { width: 200px; }
+        .btn { background: #222; color: #888; border: 1px solid #444; font: 12px monospace; padding: 4px 16px; cursor: pointer; }
+        .btn:hover { background: #2e2e2e; color: #aaa; }
+        .btn.active { background: #383838; color: #ddd; border-color: #666; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="width: 960px; height: 540px;"></canvas>
+    <div id="info"></div>
+    <div id="controls">
+        <span>Particles:</span>
+        <input type="range" id="count" min="20" max="2000" step="10" value="500">
+        <span id="countLabel">500</span>
+        <span style="margin-left: 8px;">Collider:</span>
+        <button class="btn active" id="btnSphere">sphere</button>
+        <button class="btn"        id="btnBox">box</button>
+    </div>
+
+    <script type="module">
+        import { Engine }  from './engine/engine.js';
+        import { Texture } from './engine/texture.js';
+        import { Sprite }  from './engine/sprite.js';
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        // ── Physics constants ────────────────────────────────────────────
+        const GRAVITY     = 120;  // px / s²
+        const SPEED_MIN   = 100;  // particle launch speed range
+        const SPEED_MAX   = 140;
+        const SPREAD      = 0.8;  // cone width in radians (±0.4)
+        const AGE_MIN     = 1.5;  // particle lifetime range (s)
+        const AGE_MAX     = 2.0;
+        const RESTITUTION = 0.65; // energy kept after bounce (0 = dead stop, 1 = elastic)
+
+        // ── Emitter ──────────────────────────────────────────────────────
+        const EMITTER_X = 240;
+        const EMITTER_Y = 255;
+
+        // ── Ball / collider ──────────────────────────────────────────────
+        // The ball sprite is 32×32 at logical resolution.
+        // Sphere collider radius matches the sprite half-size exactly.
+        // Box collider is wider and shorter — a clearly different silhouette —
+        // to make the behavioral difference between shapes obvious.
+        const BALL_SIZE  = 32;
+        const SPHERE_R   = 16;   // sphere radius
+        const BOX_HALF_W = 22;   // box half-width  (44 px total)
+        const BOX_HALF_H = 10;   // box half-height (20 px total)
+
+        // Ball sweeps horizontally at a fixed height through the fountain.
+        // ballY is chosen so the ball sits in the middle of the particle arc.
+        const BALL_Y     = 200;
+        const BALL_AMP   = 190;  // ± pixels from center
+        const BALL_OMEGA = 0.5;  // rad/s  →  period ≈ 12.6 s
+
+        const COLLIDER_INFO = {
+            sphere: 'sphere collider — particles bounce radially from the center point',
+            box:    'box collider — particles bounce off flat faces; corners deflect at 45°',
+        };
+
+        // ── Particle factory ─────────────────────────────────────────────
+        function makeParticle(stagger = false) {
+            const angle = -Math.PI / 2 + (Math.random() - 0.5) * SPREAD;
+            const speed = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN);
+            const maxAge = AGE_MIN + Math.random() * (AGE_MAX - AGE_MIN);
+            const vx0 = Math.cos(angle) * speed;
+            const vy0 = Math.sin(angle) * speed;
+            const age = stagger ? Math.random() * maxAge : 0;
+            return {
+                x:   EMITTER_X + vx0 * age,
+                y:   EMITTER_Y + vy0 * age + 0.5 * GRAVITY * age * age,
+                vx:  vx0,
+                vy:  vy0 + GRAVITY * age,
+                age,
+                maxAge,
+            };
+        }
+
+        // ── Collision — sphere ───────────────────────────────────────────
+        // Reflect velocity along the normal from ball center to particle,
+        // accounting for the ball's current horizontal velocity so particles
+        // pick up momentum from a moving ball.
+        function collideSphere(p, ballX, ballVx) {
+            const dx = p.x - ballX;
+            const dy = p.y - BALL_Y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq >= SPHERE_R * SPHERE_R || distSq === 0) return;
+
+            const dist = Math.sqrt(distSq);
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            // Push particle to the surface.
+            p.x = ballX + nx * SPHERE_R;
+            p.y = BALL_Y + ny * SPHERE_R;
+
+            // Reflect relative velocity along the collision normal.
+            const relVx = p.vx - ballVx;
+            const dot   = relVx * nx + p.vy * ny;
+            if (dot < 0) {
+                p.vx -= (1 + RESTITUTION) * dot * nx;
+                p.vy -= (1 + RESTITUTION) * dot * ny;
+            }
+        }
+
+        // ── Collision — axis-aligned box ─────────────────────────────────
+        // Find the face with the smallest penetration depth and push the
+        // particle out through that face, then reflect the perpendicular
+        // velocity component. The ball's velocity is included so particles
+        // receive momentum from a moving collider.
+        function collideBox(p, ballX, ballVx) {
+            const left   = ballX - BOX_HALF_W;
+            const right  = ballX + BOX_HALF_W;
+            const top    = BALL_Y - BOX_HALF_H;
+            const bottom = BALL_Y + BOX_HALF_H;
+
+            if (p.x <= left || p.x >= right || p.y <= top || p.y >= bottom) return;
+
+            // Penetration depth to each face.
+            const dL = p.x - left;
+            const dR = right  - p.x;
+            const dT = p.y - top;
+            const dB = bottom - p.y;
+            const minD = Math.min(dL, dR, dT, dB);
+
+            // Velocity relative to the (horizontally moving) box.
+            const relVx = p.vx - ballVx;
+
+            if (minD === dL) {
+                // Hit left face — push left, reflect horizontal velocity.
+                p.x = left;
+                if (relVx > 0) p.vx = ballVx - relVx * RESTITUTION;
+            } else if (minD === dR) {
+                // Hit right face — push right.
+                p.x = right;
+                if (relVx < 0) p.vx = ballVx - relVx * RESTITUTION;
+            } else if (minD === dT) {
+                // Hit top face — push up, reflect vertical velocity.
+                // (Box doesn't move vertically, so no relative vy needed.)
+                p.y = top;
+                if (p.vy > 0) p.vy = -p.vy * RESTITUTION;
+            } else {
+                // Hit bottom face — push down.
+                p.y = bottom;
+                if (p.vy < 0) p.vy = -p.vy * RESTITUTION;
+            }
+        }
+
+        // ── Collider outline helpers ──────────────────────────────────────
+        function drawSphereOutline(bb, ballX) {
+            const steps = Math.ceil(2 * Math.PI * SPHERE_R);
+            for (let i = 0; i < steps; i++) {
+                const a = (i / steps) * 2 * Math.PI;
+                bb.drawPoint(
+                    Math.round(ballX + Math.cos(a) * SPHERE_R),
+                    Math.round(BALL_Y + Math.sin(a) * SPHERE_R),
+                    80, 220, 220,
+                );
+            }
+        }
+
+        function drawBoxOutline(bb, ballX) {
+            const x0 = Math.round(ballX - BOX_HALF_W);
+            const x1 = Math.round(ballX + BOX_HALF_W);
+            const y0 = Math.round(BALL_Y - BOX_HALF_H);
+            const y1 = Math.round(BALL_Y + BOX_HALF_H);
+            for (let x = x0; x <= x1; x++) {
+                bb.drawPoint(x, y0, 255, 160, 60);
+                bb.drawPoint(x, y1, 255, 160, 60);
+            }
+            for (let y = y0 + 1; y < y1; y++) {
+                bb.drawPoint(x0, y, 255, 160, 60);
+                bb.drawPoint(x1, y, 255, 160, 60);
+            }
+        }
+
+        // ── Main ─────────────────────────────────────────────────────────
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 480, 270);
+
+            const ballImg     = await loadImage('white_ball.png');
+            const ballTexture = await Texture.create(engine.device, ballImg);
+            const ballSprite  = new Sprite(ballTexture, {
+                x: 0, y: 0, width: BALL_SIZE, height: BALL_SIZE,
+            });
+
+            let particles     = Array.from({ length: 500 }, () => makeParticle(true));
+            let colliderType  = 'sphere';
+            let ballT = 0, ballX = EMITTER_X, ballVx = 0;
+
+            // ── UI wiring ─────────────────────────────────────────────────
+            const slider     = document.getElementById('count');
+            const countLabel = document.getElementById('countLabel');
+            const infoEl     = document.getElementById('info');
+            const btnSphere  = document.getElementById('btnSphere');
+            const btnBox     = document.getElementById('btnBox');
+
+            function setCollider(type) {
+                colliderType = type;
+                infoEl.textContent = COLLIDER_INFO[type];
+                btnSphere.classList.toggle('active', type === 'sphere');
+                btnBox.classList.toggle('active', type === 'box');
+            }
+            setCollider('sphere');
+
+            btnSphere.addEventListener('click', () => setCollider('sphere'));
+            btnBox.addEventListener('click',    () => setCollider('box'));
+
+            slider.addEventListener('input', () => {
+                const n = parseInt(slider.value, 10);
+                countLabel.textContent = n;
+                while (particles.length < n) particles.push(makeParticle(false));
+                particles.length = n;
+            });
+
+            // ── Loop ──────────────────────────────────────────────────────
+            let lastTime = null;
+
+            function loop(timestamp) {
+                const dt = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.05);
+                lastTime = timestamp;
+
+                // Advance ball position; derive velocity from displacement.
+                ballT += dt;
+                const prevBallX = ballX;
+                ballX  = EMITTER_X + Math.sin(ballT * BALL_OMEGA) * BALL_AMP;
+                ballVx = dt > 0 ? (ballX - prevBallX) / dt : 0;
+
+                // Choose collision function for this frame.
+                const collide = colliderType === 'sphere'
+                    ? p => collideSphere(p, ballX, ballVx)
+                    : p => collideBox(p, ballX, ballVx);
+
+                // Update particles.
+                for (const p of particles) {
+                    p.age += dt;
+                    if (p.age >= p.maxAge) {
+                        Object.assign(p, makeParticle(false));
+                        continue;
+                    }
+                    p.vy += GRAVITY * dt;
+                    p.x  += p.vx * dt;
+                    p.y  += p.vy * dt;
+                    collide(p);
+                }
+
+                // ── Render ─────────────────────────────────────────────
+                engine.backbuffer.clear(0, 0, 0);
+
+                // Layer 1 — particles (drawn behind the ball).
+                engine.backbuffer.layer([]);
+                for (const p of particles) {
+                    engine.backbuffer.drawPoint(p.x, p.y, 100, 200, 255);
+                }
+
+                // Layer 2 — ball sprite then collider outline on top of it.
+                // Sprites are batched before points within a layer, so the
+                // outline always sits visually in front of the ball texture.
+                engine.backbuffer.layer([]);
+                ballSprite.x = Math.round(ballX - BALL_SIZE / 2);
+                ballSprite.y = Math.round(BALL_Y - BALL_SIZE / 2);
+                engine.backbuffer.draw(ballSprite);
+
+                if (colliderType === 'sphere') {
+                    drawSphereOutline(engine.backbuffer, ballX);
+                } else {
+                    drawBoxOutline(engine.backbuffer, ballX);
+                }
+
+                engine.buffer_flip();
+                requestAnimationFrame(loop);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

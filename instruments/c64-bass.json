@@ -1,0 +1,26 @@
+{
+  "type": "osc",
+  "name": "C64 Bass",
+  "version": "1.0",
+
+  "voices": 2,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "oscillators": [
+    { "waveform": "sawtooth", "level": 0.7 }
+  ],
+
+  "envelope": {
+    "attack":  0.002,
+    "decay":   0.1,
+    "sustain": 0.5,
+    "decay2":  0.3,
+    "release": 0.08
+  },
+
+  "filter": { "type": "lowpass", "frequency": 600, "Q": 6 },
+
+  "lfos": []
+}

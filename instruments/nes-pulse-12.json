@@ -1,0 +1,26 @@
+{
+  "type": "osc",
+  "name": "NES Pulse 12.5%",
+  "version": "1.0",
+
+  "voices": 3,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "oscillators": [
+    { "waveform": "square", "dutyCycle": 0.125, "level": 0.5 }
+  ],
+
+  "envelope": {
+    "attack":  0.001,
+    "decay":   0.05,
+    "sustain": 0.75,
+    "decay2":  0,
+    "release": 0.05
+  },
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "lfos": []
+}

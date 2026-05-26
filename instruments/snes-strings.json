@@ -1,0 +1,82 @@
+{
+  "type": "fm",
+  "name": "SNES Strings",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 6,
+      "level": 0.9,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.2,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.1
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": -6,
+      "level": 0.65,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.2,
+        "decay":   0.4,
+        "sustain": 0.8,
+        "decay2":  0,
+        "release": 0.4
+      }
+    },
+    {
+      "ratio": 2.0,
+      "detune": 4,
+      "level": 0.5,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.12,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.08
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": -4,
+      "level": 0.55,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.25,
+        "decay":   0.5,
+        "sustain": 0.75,
+        "decay2":  0,
+        "release": 0.45
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1],
+    [2, 3]
+  ],
+
+  "filter": { "type": "lowpass", "frequency": 6000, "Q": 0.8 },
+
+  "lfos": [
+    {
+      "target":   "pitch",
+      "waveform": "sine",
+      "rate":     4.8,
+      "depth":    0.06,
+      "delay":    0.6
+    }
+  ]
+}

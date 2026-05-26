@@ -1,0 +1,69 @@
+{
+  "type": "fm",
+  "name": "SNES Choir",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 1.2,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.1,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.05
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 7,
+      "level": 0.6,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.1,
+        "decay":   0.2,
+        "sustain": 0.85,
+        "decay2":  0,
+        "release": 0.3
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": -7,
+      "level": 0.6,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.15,
+        "decay":   0.2,
+        "sustain": 0.85,
+        "decay2":  0,
+        "release": 0.3
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1],
+    [0, 2]
+  ],
+
+  "filter": { "type": "bandpass", "frequency": 1400, "Q": 1.2 },
+
+  "lfos": [
+    {
+      "target":   "pitch",
+      "waveform": "sine",
+      "rate":     4.2,
+      "depth":    0.10,
+      "delay":    0.4
+    }
+  ]
+}

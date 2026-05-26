@@ -1,4 +1,4 @@
-import { VERTEX_SHADER, FRAGMENT_SHADER, PALETTE_FRAGMENT_SHADER, OVERLAY_FRAGMENT_SHADER, MAX_LIGHTS, LIGHT_BUFFER_SIZE } from './shaders.js';
+import { VERTEX_SHADER, FRAGMENT_SHADER, PALETTE_FRAGMENT_SHADER, OVERLAY_FRAGMENT_SHADER, POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER, MAX_LIGHTS, LIGHT_BUFFER_SIZE } from './shaders.js';
 import { BackBuffer } from './backbuffer.js';
 import { NearestNeighborScaler } from './scalers/nearest-neighbor.js';
 
@@ -19,6 +19,12 @@ const LIGHT_STRUCT_BYTES = 64;
 // Byte offset of the lights array inside the LightArray uniform
 const LIGHTS_ARRAY_OFFSET = 16;
 
+// Vertex buffer layout sizes
+const FLOATS_PER_SPRITE = 48; // 6 vertices × 8 floats
+const BYTES_PER_SPRITE  = 192;
+const FLOATS_PER_POINT  = 6;  // position (2) + color (4)
+const BYTES_PER_POINT   = 24;
+
 export class Engine {
     /** @type {GPUDevice} */
     device;
@@ -33,11 +39,11 @@ export class Engine {
     /** @type {GPURenderPipeline} */
     overlayPipeline;
     /** @type {GPURenderPipeline} */
+    pointPipeline;
+    /** @type {GPURenderPipeline} */
     compositePipeline;
     /** @type {GPUBuffer} */
     uniformBuffer;
-    /** @type {GPUBuffer} */
-    vertexBuffer;
     /** @type {GPUBindGroup} */
     frameBindGroup;
     /** @type {GPUBindGroupLayout} */
@@ -70,6 +76,10 @@ export class Engine {
     #layerPool = [];
     /** @type {Array<{ buffer: GPUBuffer, bindGroup: GPUBindGroup | null }>} */
     #lightBufferPool = [];
+    /** @type {Array<{ buffer: GPUBuffer, capacity: number }>} */
+    #spriteBufferPool = [];
+    /** @type {Array<{ buffer: GPUBuffer, capacity: number }>} */
+    #pointBufferPool = [];
     // Sprite bind groups cached by Texture instance — same views/sampler every frame
     /** @type {WeakMap<import('./texture.js').Texture, GPUBindGroup>} */
     #spriteBindGroupCache = new WeakMap();
@@ -142,10 +152,6 @@ export class Engine {
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         device.queue.writeBuffer(engine.uniformBuffer, 0, new Float32Array([width, height]));
-
-        // Vertex buffer — sized dynamically at flip time to fit all sprites in a layer
-        engine.vertexBuffer = null;
-        engine.vertexBufferCapacity = 0; // capacity in number of sprites
 
         engine._buildPipelines();
 
@@ -284,6 +290,35 @@ export class Engine {
             primitive: { topology: 'triangle-list' },
         });
 
+        // --- Point pipeline ---
+        // Draws individual pixels using point-list topology.
+        // Uses groups 0 (screen) and 1 (lights) only — no texture needed.
+
+        const POINT_VERTEX_BUFFERS = [{
+            arrayStride: 6 * 4,
+            attributes: [
+                { shaderLocation: 0, offset: 0,     format: 'float32x2' },
+                { shaderLocation: 1, offset: 2 * 4, format: 'float32x4' },
+            ],
+        }];
+
+        this.pointPipeline = device.createRenderPipeline({
+            layout: device.createPipelineLayout({
+                bindGroupLayouts: [frameBindGroupLayout, this.lightBindGroupLayout],
+            }),
+            vertex: {
+                module: device.createShaderModule({ code: POINT_VERTEX_SHADER }),
+                entryPoint: 'vs_main',
+                buffers: POINT_VERTEX_BUFFERS,
+            },
+            fragment: {
+                module: device.createShaderModule({ code: POINT_FRAGMENT_SHADER }),
+                entryPoint: 'fs_main',
+                targets: [{ format: 'rgba8unorm', blend: SPRITE_BLEND }],
+            },
+            primitive: { topology: 'point-list' },
+        });
+
         // --- Composite pipeline ---
         // Blends layer textures in order onto the internal texture.
 
@@ -391,6 +426,36 @@ export class Engine {
         return this.#lightBufferPool[index];
     }
 
+    // Returns a per-layer sprite vertex buffer, creating or growing it as needed.
+    #getSpriteBuffer(index, minCount) {
+        const entry = this.#spriteBufferPool[index];
+        if (!entry || entry.capacity < minCount) {
+            entry?.buffer.destroy();
+            const buffer = this.device.createBuffer({
+                size: minCount * BYTES_PER_SPRITE,
+                usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            this.#spriteBufferPool[index] = { buffer, capacity: minCount };
+            return buffer;
+        }
+        return entry.buffer;
+    }
+
+    // Returns a per-layer point vertex buffer, creating or growing it as needed.
+    #getPointBuffer(index, minCount) {
+        const entry = this.#pointBufferPool[index];
+        if (!entry || entry.capacity < minCount) {
+            entry?.buffer.destroy();
+            const buffer = this.device.createBuffer({
+                size: minCount * BYTES_PER_POINT,
+                usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            });
+            this.#pointBufferPool[index] = { buffer, capacity: minCount };
+            return buffer;
+        }
+        return entry.buffer;
+    }
+
     // Returns a sprite bind group for a texture, creating and caching it on first use.
     #getSpriteBindGroup(tex) {
         if (!this.#spriteBindGroupCache.has(tex)) {
@@ -475,17 +540,20 @@ export class Engine {
 
         // Split command list into layers.
         // Draws before the first layer() are an implicit unlit layer.
+        // Each layer holds a unified item list preserving submission order.
         const layers = [];
-        let current = { lights: [], draws: [] };
+        let current = { lights: [], items: [] };
         for (const cmd of commands) {
             if (cmd.type === 'layer') {
-                if (current.draws.length > 0) layers.push(current);
-                current = { lights: cmd.lights, draws: [] };
+                if (current.items.length > 0) layers.push(current);
+                current = { lights: cmd.lights, items: [] };
             } else if (cmd.type === 'draw') {
-                current.draws.push(cmd.sprite);
+                current.items.push({ kind: 'sprite', sprite: cmd.sprite });
+            } else if (cmd.type === 'point') {
+                current.items.push({ kind: 'point', x: cmd.x, y: cmd.y, r: cmd.r, g: cmd.g, b: cmd.b, a: cmd.a });
             }
         }
-        if (current.draws.length > 0) layers.push(current);
+        if (current.items.length > 0) layers.push(current);
 
         const encoder = device.createCommandEncoder();
 
@@ -506,74 +574,92 @@ export class Engine {
                 }],
             });
 
-            // Build all vertex data for this layer into one array before the pass.
-            // Each sprite is 6 vertices × 8 floats = 48 floats = 192 bytes.
-            const FLOATS_PER_SPRITE = 6 * 8;
-            const BYTES_PER_SPRITE  = FLOATS_PER_SPRITE * 4;
-            const spriteCount = layer.draws.length;
-
-            // Grow the vertex buffer if this layer has more sprites than it can hold.
-            if (spriteCount > this.vertexBufferCapacity) {
-                this.vertexBuffer?.destroy();
-                this.vertexBuffer = device.createBuffer({
-                    size: spriteCount * BYTES_PER_SPRITE,
-                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-                });
-                this.vertexBufferCapacity = spriteCount;
+            // Count sprites and points so we can size the per-layer vertex buffers.
+            let spriteCount = 0;
+            let pointCount  = 0;
+            for (const item of layer.items) {
+                if (item.kind === 'sprite') spriteCount++;
+                else if (item.kind === 'point') pointCount++;
             }
 
-            const allVerts = new Float32Array(spriteCount * FLOATS_PER_SPRITE);
-            for (let si = 0; si < spriteCount; si++) {
-                const sprite = layer.draws[si];
-                const { x, y, width, height, texture: tex, frameIndex, vertexColors,
-                        flipX, flipY, rotation, pivotX, pivotY } = sprite;
-                const px = Math.floor(x);
-                const py = Math.floor(y);
+            // Get per-layer vertex buffers (each layer has its own so writeBuffer calls
+            // from different layers don't clobber each other before GPU execution).
+            const spriteBuffer = spriteCount > 0 ? this.#getSpriteBuffer(li, spriteCount) : null;
+            const pointBuffer  = pointCount  > 0 ? this.#getPointBuffer(li, pointCount)   : null;
 
-                let { u0, v0, u1, v1 } = tex.getUVs(frameIndex);
-                if (flipX) { const tmp = u0; u0 = u1; u1 = tmp; }
-                if (flipY) { const tmp = v0; v0 = v1; v1 = tmp; }
+            // Build and upload sprite vertex data.
+            if (spriteCount > 0) {
+                const allVerts = new Float32Array(spriteCount * FLOATS_PER_SPRITE);
+                let si = 0;
+                for (const item of layer.items) {
+                    if (item.kind !== 'sprite') continue;
+                    const sprite = item.sprite;
+                    const { x, y, width, height, texture: tex, frameIndex, vertexColors,
+                            flipX, flipY, rotation, pivotX, pivotY } = sprite;
+                    const px = Math.floor(x);
+                    const py = Math.floor(y);
 
-                // Compute corner positions, rotating around the pivot if needed.
-                // Vertex positions are rounded to the nearest pixel so that the
-                // nearest-neighbor sampler lands on whole texels (retro pixel grid).
-                let tlX, tlY, trX, trY, blX, blY, brX, brY;
-                if (rotation) {
-                    const rad = rotation * (Math.PI / 180);
-                    const cosA = Math.cos(rad);
-                    const sinA = Math.sin(rad);
-                    const cx = px + pivotX;
-                    const cy = py + pivotY;
-                    [tlX, tlY] = _rotatePixel(cx, cy, px,         py,          cosA, sinA);
-                    [trX, trY] = _rotatePixel(cx, cy, px + width,  py,          cosA, sinA);
-                    [blX, blY] = _rotatePixel(cx, cy, px,          py + height, cosA, sinA);
-                    [brX, brY] = _rotatePixel(cx, cy, px + width,  py + height, cosA, sinA);
-                } else {
-                    tlX = px;         tlY = py;
-                    trX = px + width; trY = py;
-                    blX = px;         blY = py + height;
-                    brX = px + width; brY = py + height;
+                    let { u0, v0, u1, v1 } = tex.getUVs(frameIndex);
+                    if (flipX) { const tmp = u0; u0 = u1; u1 = tmp; }
+                    if (flipY) { const tmp = v0; v0 = v1; v1 = tmp; }
+
+                    // Compute corner positions, rotating around the pivot if needed.
+                    // Vertex positions are rounded to the nearest pixel so that the
+                    // nearest-neighbor sampler lands on whole texels (retro pixel grid).
+                    let tlX, tlY, trX, trY, blX, blY, brX, brY;
+                    if (rotation) {
+                        const rad = rotation * (Math.PI / 180);
+                        const cosA = Math.cos(rad);
+                        const sinA = Math.sin(rad);
+                        const cx = px + pivotX;
+                        const cy = py + pivotY;
+                        [tlX, tlY] = _rotatePixel(cx, cy, px,         py,          cosA, sinA);
+                        [trX, trY] = _rotatePixel(cx, cy, px + width,  py,          cosA, sinA);
+                        [blX, blY] = _rotatePixel(cx, cy, px,          py + height, cosA, sinA);
+                        [brX, brY] = _rotatePixel(cx, cy, px + width,  py + height, cosA, sinA);
+                    } else {
+                        tlX = px;         tlY = py;
+                        trX = px + width; trY = py;
+                        blX = px;         blY = py + height;
+                        brX = px + width; brY = py + height;
+                    }
+
+                    const [tl, tr, bl, br] = vertexColors.map(c => [
+                        c.r / 255, c.g / 255, c.b / 255, c.a / 255,
+                    ]);
+                    const base = si * FLOATS_PER_SPRITE;
+                    allVerts.set([
+                        tlX, tlY, u0, v0, ...tl,
+                        trX, trY, u1, v0, ...tr,
+                        blX, blY, u0, v1, ...bl,
+                        trX, trY, u1, v0, ...tr,
+                        brX, brY, u1, v1, ...br,
+                        blX, blY, u0, v1, ...bl,
+                    ], base);
+                    si++;
                 }
-
-                const [tl, tr, bl, br] = vertexColors.map(c => [
-                    c.r / 255, c.g / 255, c.b / 255, c.a / 255,
-                ]);
-                const base = si * FLOATS_PER_SPRITE;
-                allVerts.set([
-                    tlX, tlY, u0, v0, ...tl,
-                    trX, trY, u1, v0, ...tr,
-                    blX, blY, u0, v1, ...bl,
-                    trX, trY, u1, v0, ...tr,
-                    brX, brY, u1, v1, ...br,
-                    blX, blY, u0, v1, ...bl,
-                ], base);
+                device.queue.writeBuffer(spriteBuffer, 0, allVerts);
             }
-            device.queue.writeBuffer(this.vertexBuffer, 0, allVerts);
 
+            // Build and upload point vertex data.
+            if (pointCount > 0) {
+                const allPointVerts = new Float32Array(pointCount * FLOATS_PER_POINT);
+                let pi = 0;
+                for (const item of layer.items) {
+                    if (item.kind !== 'point') continue;
+                    allPointVerts.set([item.x, item.y, item.r, item.g, item.b, item.a], pi * FLOATS_PER_POINT);
+                    pi++;
+                }
+                device.queue.writeBuffer(pointBuffer, 0, allPointVerts);
+            }
+
+            // Draw sprites first (in submission order), then all points in one draw call.
             let activePipeline = null;
+            let spriteCursor   = 0;
 
-            for (let si = 0; si < spriteCount; si++) {
-                const sprite = layer.draws[si];
+            for (const item of layer.items) {
+                if (item.kind !== 'sprite') continue;
+                const sprite = item.sprite;
                 const hasPalette = sprite.paletteSrc && sprite.paletteDst;
                 const needed = sprite.overlay ? this.overlayPipeline
                              : hasPalette     ? this.palettePipeline
@@ -591,8 +677,18 @@ export class Engine {
                     : this.#getSpriteBindGroup(sprite.texture);
 
                 pass.setBindGroup(2, spriteBindGroup);
-                pass.setVertexBuffer(0, this.vertexBuffer, si * BYTES_PER_SPRITE, BYTES_PER_SPRITE);
+                pass.setVertexBuffer(0, spriteBuffer, spriteCursor * BYTES_PER_SPRITE, BYTES_PER_SPRITE);
                 pass.draw(6);
+                spriteCursor++;
+            }
+
+            // All points in one draw call — one pipeline switch, one setVertexBuffer, done.
+            if (pointCount > 0) {
+                pass.setPipeline(this.pointPipeline);
+                pass.setBindGroup(0, this.frameBindGroup);
+                pass.setBindGroup(1, lightBuffer.bindGroup);
+                pass.setVertexBuffer(0, pointBuffer, 0, pointCount * BYTES_PER_POINT);
+                pass.draw(pointCount);
             }
 
             pass.end();

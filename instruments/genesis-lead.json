@@ -1,0 +1,47 @@
+{
+  "type": "fm",
+  "name": "Genesis Lead",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 3.0,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.04,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.02
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 0.72,
+      "feedback": 0.35,
+      "envelope": {
+        "attack":  0.002,
+        "decay":   0.06,
+        "sustain": 0.82,
+        "decay2":  0,
+        "release": 0.05
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1]
+  ],
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "lfos": []
+}

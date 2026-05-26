@@ -1,0 +1,82 @@
+{
+  "type": "fm",
+  "name": "Genesis Strings",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 5,
+      "level": 1.4,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.12,
+        "decay":   0.4,
+        "sustain": 0.6,
+        "decay2":  0,
+        "release": 0.3
+      }
+    },
+    {
+      "ratio": 2.0,
+      "detune": -4,
+      "level": 0.8,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.15,
+        "decay":   0.3,
+        "sustain": 0.5,
+        "decay2":  0,
+        "release": 0.25
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": -5,
+      "level": 0.55,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.18,
+        "decay":   0.5,
+        "sustain": 0.75,
+        "decay2":  0,
+        "release": 0.35
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 4,
+      "level": 0.55,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.2,
+        "decay":   0.5,
+        "sustain": 0.75,
+        "decay2":  0,
+        "release": 0.35
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 2],
+    [1, 3]
+  ],
+
+  "filter": { "type": "lowpass", "frequency": 5000, "Q": 1 },
+
+  "lfos": [
+    {
+      "target":   "pitch",
+      "waveform": "sine",
+      "rate":     5.2,
+      "depth":    0.08,
+      "delay":    0.5
+    }
+  ]
+}

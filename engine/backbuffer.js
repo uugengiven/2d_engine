@@ -38,4 +38,19 @@ export class BackBuffer {
     draw(sprite) {
         this.commands.push({ type: 'draw', sprite });
     }
+
+    /**
+     * Records a single pixel draw for this frame.
+     * The pixel is affected by the current layer's lighting using a flat normal.
+     * No GPU work happens here.
+     * @param {number} x  Logical x position
+     * @param {number} y  Logical y position
+     * @param {number} r  Red   0–255
+     * @param {number} g  Green 0–255
+     * @param {number} b  Blue  0–255
+     * @param {number} a  Alpha 0–255 (default 255)
+     */
+    drawPoint(x, y, r, g, b, a = 255) {
+        this.commands.push({ type: 'point', x, y, r: r / 255, g: g / 255, b: b / 255, a: a / 255 });
+    }
 }

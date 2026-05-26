@@ -7,7 +7,7 @@
  *
  * Message protocol  (main → worklet):
  *   { type:'init',        voiceCount }
- *   { type:'noteOn',      voiceId, note, vel, when, oscDefs, envDef, lfoDefs, pan, transpose }
+ *   { type:'noteOn',      voiceId, note, vel, when, oscDefs, envDef, lfoDefs, arpDef, pan, transpose }
  *   { type:'noteOff',     voiceId, when }
  *   { type:'killVoice',   voiceId }
  *   { type:'allNotesOff', when }
@@ -85,10 +85,15 @@ class SynthProcessor extends AudioWorkletProcessor {
             pan:             0,
             oscs:            [],
             lfos:            [],
+            arpSteps:        null,
+            arpInterval:     0,
+            arpIdx:          0,
+            arpCounter:      0,
+            arpMult:         1,
         }));
     }
 
-    _noteOn({ voiceId, note, vel, when, oscDefs, envDef, lfoDefs, pan, transpose }) {
+    _noteOn({ voiceId, note, vel, when, oscDefs, envDef, lfoDefs, arpDef, pan, transpose }) {
         const v = this._voices[voiceId];
         if (!v) return;
 
@@ -123,6 +128,17 @@ class SynthProcessor extends AudioWorkletProcessor {
             startFrame: startFrame + Math.round((ld.delay ?? 0) * sampleRate),
             phase:      0,
         }));
+
+        if (arpDef && arpDef.steps && arpDef.steps.length > 0) {
+            v.arpSteps    = arpDef.steps;
+            v.arpInterval = Math.round(sampleRate / (arpDef.rate ?? 8));
+            v.arpIdx      = 0;
+            v.arpCounter  = 0;
+            v.arpMult     = Math.pow(2, arpDef.steps[0] / 12);
+        } else {
+            v.arpSteps = null;
+            v.arpMult  = 1;
+        }
     }
 
     _noteOff({ voiceId, when }) {
@@ -236,10 +252,19 @@ class SynthProcessor extends AudioWorkletProcessor {
                     else if (lfo.target === 'volume') ampMod += lfoVal;
                 }
 
+                // ── arpeggio ──
+                if (v.arpSteps) {
+                    if (++v.arpCounter >= v.arpInterval) {
+                        v.arpCounter = 0;
+                        v.arpIdx = (v.arpIdx + 1) % v.arpSteps.length;
+                        v.arpMult = Math.pow(2, v.arpSteps[v.arpIdx] / 12);
+                    }
+                }
+
                 // ── oscillators ──
-                const freqMult = pitchSemitones !== 0
+                const freqMult = v.arpMult * (pitchSemitones !== 0
                     ? Math.pow(2, pitchSemitones / 12)
-                    : 1;
+                    : 1);
 
                 let oscMix = 0;
                 for (let oi = 0; oi < v.oscs.length; oi++) {

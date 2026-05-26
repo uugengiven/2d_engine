@@ -455,18 +455,62 @@
 
     // ── constants ─────────────────────────────────────────────────────────────
     const INST_URLS = [
-      'instruments/nes-pulse-25.json',
-      'instruments/nes-pulse-50.json',
-      'instruments/nes-triangle.json',
-      'instruments/nes-noise.json',
-      'instruments/fat-triangle.json',
-      'instruments/fm-bell.json',
-      'instruments/fm-electric-piano.json',
-      'instruments/fm-bass.json',
-      'instruments/fm-brass.json',
+      'instruments/nes-pulse-25.json',      //  0
+      'instruments/nes-pulse-50.json',      //  1
+      'instruments/nes-triangle.json',      //  2
+      'instruments/nes-noise.json',         //  3
+      'instruments/fat-triangle.json',      //  4
+      'instruments/fm-bell.json',           //  5
+      'instruments/fm-electric-piano.json', //  6
+      'instruments/fm-bass.json',           //  7
+      'instruments/fm-brass.json',          //  8
+      'instruments/nes-pulse-12.json',      //  9
+      'instruments/c64-lead.json',          // 10
+      'instruments/c64-bass.json',          // 11
+      'instruments/c64-arp.json',           // 12
+      'instruments/genesis-bass.json',      // 13
+      'instruments/genesis-lead.json',      // 14
+      'instruments/genesis-strings.json',   // 15
+      'instruments/genesis-organ.json',     // 16
+      'instruments/snes-piano.json',        // 17
+      'instruments/snes-strings.json',      // 18
+      'instruments/snes-flute.json',        // 19
+      'instruments/snes-choir.json',        // 20
     ];
-    const INST_NAMES  = ['Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Triangle', 'FM Bell', 'FM E.Piano', 'FM Bass', 'FM Brass'];
-    const INST_SHORT  = ['P25', 'P50', 'TRI', 'NOI', 'FAT', 'FMB', 'FME', 'FMb', 'FMR'];
+    const INST_NAMES = [
+      'Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Tri',
+      'FM Bell', 'FM E.Piano', 'FM Bass', 'FM Brass',
+      'NES Pulse 12%',
+      'C64 Lead', 'C64 Bass', 'C64 Arp',
+      'Gen Bass', 'Gen Lead', 'Gen Strings', 'Gen Organ',
+      'SNES Piano', 'SNES Strings', 'SNES Flute', 'SNES Choir',
+    ];
+    const INST_SHORT = [
+      'P25', 'P50', 'TRI', 'NOI', 'FAT',
+      'FMB', 'FME', 'FMb', 'FMR',
+      'P12',
+      'C6L', 'C6B', 'C6A',
+      'GNB', 'GNL', 'GNS', 'GNO',
+      'SNP', 'SNS', 'SNF', 'SNC',
+    ];
+    const INST_GROUPS = [
+      { label: 'NES',        indices: [0, 1, 9, 2, 3] },
+      { label: 'Other',      indices: [4] },
+      { label: 'FM Classic', indices: [5, 6, 7, 8] },
+      { label: 'C64',        indices: [10, 11, 12] },
+      { label: 'Genesis',    indices: [13, 14, 15, 16] },
+      { label: 'SNES / PSX', indices: [17, 18, 19, 20] },
+    ];
+
+    function instOptsHtml(selectedIdx) {
+      return INST_GROUPS.map(({ label, indices }) =>
+        `<optgroup label="${label}">${
+          indices.map(i =>
+            `<option value="${i}"${i === selectedIdx ? ' selected' : ''}>${INST_NAMES[i]}</option>`
+          ).join('')
+        }</optgroup>`
+      ).join('');
+    }
 
     const NOTE_NAMES   = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     const KEY_SEMITONE = { z:0,s:1,x:2,d:3,c:4,v:5,g:6,b:7,h:8,n:9,j:10,m:11 };
@@ -701,9 +745,7 @@
       // ── header ──
       let hdr = '<tr><th class="row-num-h"></th>';
       tracks.forEach((tr, t) => {
-        const opts = INST_NAMES.map((n, i) =>
-          `<option value="${i}"${i === tr.instIdx ? ' selected' : ''}>${n}</option>`
-        ).join('');
+        const opts = instOptsHtml(tr.instIdx);
         hdr += `<th class="track-header">
           <div class="track-controls">
             <select class="inst-sel" data-t="${t}">${opts}</select>
@@ -1409,12 +1451,17 @@
     let ctxTarget = null; // { t, r }
 
     // Populate instrument options once
-    INST_NAMES.forEach((name, i) => {
-      const opt = document.createElement('option');
-      opt.value = i;
-      opt.textContent = name;
-      ctxInstSel.appendChild(opt);
-    });
+    for (const { label, indices } of INST_GROUPS) {
+      const grp = document.createElement('optgroup');
+      grp.label = label;
+      for (const i of indices) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = INST_NAMES[i];
+        grp.appendChild(opt);
+      }
+      ctxInstSel.appendChild(grp);
+    }
 
     function showCtxMenu(x, y, t, r) {
       ctxTarget = { t, r };

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Points Demo</title>
+    <style>
+        body { margin: 0; background: #111; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; gap: 12px; }
+        canvas { image-rendering: pixelated; }
+        #labels { color: #aaa; font: 12px monospace; display: flex; width: 960px; }
+        #labels span { text-align: center; width: 320px; }
+        #controls { color: #aaa; font: 12px monospace; display: flex; align-items: center; gap: 12px; }
+        #controls input[type=range] { width: 200px; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="width: 960px; height: 540px;"></canvas>
+    <div id="labels">
+        <span>plain points</span>
+        <span>color &amp; alpha decay</span>
+        <span>point light · short radius</span>
+    </div>
+    <div id="controls">
+        <span>Particles per fountain:</span>
+        <input type="range" id="count" min="20" max="2000" step="10" value="150">
+        <span id="countLabel">150</span>
+    </div>
+
+    <script type="module">
+        import { Engine } from './engine/engine.js';
+        import { Light }  from './engine/light.js';
+
+        const GRAVITY  = 120; // px/s²
+        const SPEED_MIN = 100;
+        const SPEED_MAX = 140;
+        const SPREAD   = 0.8; // total radian spread of the cone (±0.4)
+        const AGE_MIN  = 1.5;
+        const AGE_MAX  = 2.0;
+
+        // Emitter positions for a 480×270 logical canvas, sections 160px wide
+        const EMITTERS = [
+            { x:  80, y: 255 },
+            { x: 240, y: 255 },
+            { x: 400, y: 255 },
+        ];
+
+        function makeParticle(emitter, stagger = false) {
+            const angle = -Math.PI / 2 + (Math.random() - 0.5) * SPREAD;
+            const speed = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN);
+            const maxAge = AGE_MIN + Math.random() * (AGE_MAX - AGE_MIN);
+            const vx0 = Math.cos(angle) * speed;
+            const vy0 = Math.sin(angle) * speed;
+            // Pre-advance position if staggering so the fountain looks full from frame 1
+            const age = stagger ? Math.random() * maxAge : 0;
+            return {
+                x:   emitter.x + vx0 * age,
+                y:   emitter.y + vy0 * age + 0.5 * GRAVITY * age * age,
+                vx:  vx0,
+                vy:  vy0 + GRAVITY * age,
+                age,
+                maxAge,
+            };
+        }
+
+        function setCount(fountains, count) {
+            for (let i = 0; i < fountains.length; i++) {
+                const f = fountains[i];
+                while (f.particles.length < count) {
+                    // New particles added via slider start at the emitter, no stagger
+                    f.particles.push(makeParticle(EMITTERS[i], false));
+                }
+                f.particles.length = count;
+            }
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 480, 270);
+
+            // One particle array per fountain
+            const fountains = EMITTERS.map((emitter, i) => ({
+                emitter,
+                particles: Array.from({ length: 150 }, () => makeParticle(emitter, true)),
+            }));
+
+            // Two swaying lights for fountain 3, opposite phase, different colors
+            const pointLight = Light.point(
+                { x: EMITTERS[2].x, y: EMITTERS[2].y },
+                { r: 255, g: 140, b: 50 },
+                1.8,  // intensity
+                80,   // short radius — dramatic falloff
+                1.2,  // falloff
+                45,   // height
+                0,    // smooth
+            );
+            const pointLight2 = Light.point(
+                { x: EMITTERS[2].x, y: EMITTERS[2].y },
+                { r: 60, g: 160, b: 255 },
+                1.8,
+                80,
+                1.2,
+                45,
+                0,
+            );
+
+            let swayAngle = 0;
+
+            // Slider wiring
+            const slider = document.getElementById('count');
+            const countLabel = document.getElementById('countLabel');
+            slider.addEventListener('input', () => {
+                const n = parseInt(slider.value, 10);
+                countLabel.textContent = n;
+                setCount(fountains, n);
+            });
+
+            let lastTime = null;
+
+            function loop(timestamp) {
+                const dt = lastTime === null ? 0 : Math.min((timestamp - lastTime) / 1000, 0.05);
+                lastTime = timestamp;
+
+                // Sway the two lights in opposite directions at slightly different speeds
+                swayAngle += dt * 1.4;
+                pointLight.position.x  = EMITTERS[2].x + Math.cos(swayAngle)              * 55;
+                pointLight.position.y  = EMITTERS[2].y + Math.sin(swayAngle * 0.7)        * 18;
+                pointLight2.position.x = EMITTERS[2].x + Math.cos(swayAngle + Math.PI)    * 55;
+                pointLight2.position.y = EMITTERS[2].y + Math.sin(swayAngle * 0.7 + Math.PI) * 18;
+
+                // Update particles — gravity, movement, respawn
+                for (let i = 0; i < fountains.length; i++) {
+                    const { emitter, particles } = fountains[i];
+                    for (const p of particles) {
+                        p.age += dt;
+                        if (p.age >= p.maxAge) {
+                            Object.assign(p, makeParticle(emitter, false));
+                            continue;
+                        }
+                        p.vy += GRAVITY * dt;
+                        p.x  += p.vx * dt;
+                        p.y  += p.vy * dt;
+                    }
+                }
+
+                engine.backbuffer.clear(0, 0, 0);
+
+                // --- Unlit layer: fountains 1 & 2 plus section dividers ---
+                engine.backbuffer.layer([]);
+
+                // Dotted dividers at section boundaries
+                for (let y = 3; y < engine.height; y += 5) {
+                    engine.backbuffer.drawPoint(159, y, 70, 70, 70, 140);
+                    engine.backbuffer.drawPoint(160, y, 70, 70, 70, 140);
+                    engine.backbuffer.drawPoint(319, y, 70, 70, 70, 140);
+                    engine.backbuffer.drawPoint(320, y, 70, 70, 70, 140);
+                }
+
+                // Fountain 1: plain bright blue — no decay, no lighting
+                for (const p of fountains[0].particles) {
+                    engine.backbuffer.drawPoint(p.x, p.y, 80, 180, 255);
+                }
+
+                // Fountain 2: warm orange, alpha fades as particle ages
+                for (const p of fountains[1].particles) {
+                    const t = p.age / p.maxAge;
+                    const alpha = Math.round(255 * (1 - t));
+                    engine.backbuffer.drawPoint(p.x, p.y, 255, 140, 40, alpha);
+                }
+
+                // --- Lit layer: fountain 3 with two swaying point lights ---
+                engine.backbuffer.layer([pointLight, pointLight2]);
+
+                // White particles so the light color comes through cleanly
+                for (const p of fountains[2].particles) {
+                    engine.backbuffer.drawPoint(p.x, p.y, 255, 255, 255);
+                }
+
+                engine.buffer_flip();
+                requestAnimationFrame(loop);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

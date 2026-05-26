@@ -8,6 +8,7 @@ function midiToHz(note) {
 export class OscSynth {
     /** @type {AudioContext} */      #ctx;
     /** @type {AudioWorkletNode} */  #workletNode;
+    /** @type {BiquadFilterNode} */  #filterNode;
     #def;
     #voices = [];
     #seq = 0; // monotonic counter for oldest-steal ordering
@@ -42,7 +43,14 @@ export class OscSynth {
             numberOfOutputs:   1,
             outputChannelCount: [2],
         });
-        this.#workletNode.connect(channel.inputNode);
+
+        const fDef = definition.filter ?? {};
+        this.#filterNode = ctx.createBiquadFilter();
+        this.#filterNode.type            = fDef.type      ?? 'allpass';
+        this.#filterNode.frequency.value = fDef.frequency ?? 20000;
+        this.#filterNode.Q.value         = fDef.Q         ?? 1;
+        this.#workletNode.connect(this.#filterNode);
+        this.#filterNode.connect(channel.inputNode);
 
         // Tell the worklet how many voice slots to allocate
         this.#post({ type: 'init', voiceCount: poolSize });
@@ -101,6 +109,7 @@ export class OscSynth {
             oscDefs:   def.oscillators ?? [],
             envDef:    def.envelope    ?? {},
             lfoDefs:   def.lfos        ?? [],
+            arpDef:    def.arpeggio    ?? null,
             pan:       def.pan         ?? 0,
             transpose: def.transpose   ?? 0,
         });
@@ -121,6 +130,17 @@ export class OscSynth {
     }
 
     /**
+     * Update the instrument's filter parameters live.
+     * @param {{ type?: string, frequency?: number, Q?: number }} params
+     */
+    setFilter({ type, frequency, Q } = {}) {
+        const now = this.#ctx.currentTime;
+        if (type      != null) this.#filterNode.type = type;
+        if (frequency != null) this.#filterNode.frequency.setValueAtTime(frequency, now);
+        if (Q         != null) this.#filterNode.Q.setValueAtTime(Q, now);
+    }
+
+    /**
      * Permanently disconnect this instrument. Call when removing a track or
      * switching instruments — stops worklet processing and frees the audio graph node.
      */
@@ -128,6 +148,7 @@ export class OscSynth {
         this.allNotesOff();
         this.#post({ type: 'dispose' });
         this.#workletNode.disconnect();
+        this.#filterNode.disconnect();
     }
 
     /** Release all currently playing voices. */

@@ -1,0 +1,26 @@
+{
+  "type": "osc",
+  "name": "C64 Lead",
+  "version": "1.0",
+
+  "voices": 3,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "oscillators": [
+    { "waveform": "sawtooth", "level": 0.6 }
+  ],
+
+  "envelope": {
+    "attack":  0.005,
+    "decay":   0.08,
+    "sustain": 0.7,
+    "decay2":  0,
+    "release": 0.1
+  },
+
+  "filter": { "type": "lowpass", "frequency": 2800, "Q": 4 },
+
+  "lfos": []
+}

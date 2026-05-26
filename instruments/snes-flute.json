@@ -1,0 +1,55 @@
+{
+  "type": "fm",
+  "name": "SNES Flute",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 1.6,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.12,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.05
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 0.65,
+      "feedback": 0.08,
+      "envelope": {
+        "attack":  0.04,
+        "decay":   0.1,
+        "sustain": 0.8,
+        "decay2":  0,
+        "release": 0.12
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1]
+  ],
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "lfos": [
+    {
+      "target":   "pitch",
+      "waveform": "sine",
+      "rate":     5.8,
+      "depth":    0.15,
+      "delay":    0.3
+    }
+  ]
+}

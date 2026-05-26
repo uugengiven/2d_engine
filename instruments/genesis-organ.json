@@ -1,0 +1,58 @@
+{
+  "type": "fm",
+  "name": "Genesis Organ",
+  "version": "1.0",
+
+  "voices": 4,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 0.45,
+      "feedback": 0.15,
+      "envelope": {
+        "attack":  0.006,
+        "decay":   0,
+        "sustain": 1.0,
+        "decay2":  0,
+        "release": 0.05
+      }
+    },
+    {
+      "ratio": 2.0,
+      "detune": 0,
+      "level": 0.3,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.006,
+        "decay":   0,
+        "sustain": 1.0,
+        "decay2":  0,
+        "release": 0.05
+      }
+    },
+    {
+      "ratio": 3.0,
+      "detune": 0,
+      "level": 0.2,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.006,
+        "decay":   0,
+        "sustain": 1.0,
+        "decay2":  0,
+        "release": 0.05
+      }
+    }
+  ],
+
+  "algorithm": [],
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "lfos": []
+}

@@ -1,0 +1,74 @@
+{
+  "type": "fm",
+  "name": "SNES Piano",
+  "version": "1.0",
+
+  "voices": 6,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "operators": [
+    {
+      "ratio": 14.0,
+      "detune": 0,
+      "level": 1.2,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.015,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.02
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": 0,
+      "level": 0.6,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.6,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.12
+      }
+    },
+    {
+      "ratio": 7.0,
+      "detune": 3,
+      "level": 0.6,
+      "feedback": 0,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.02,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.02
+      }
+    },
+    {
+      "ratio": 1.0,
+      "detune": -3,
+      "level": 0.5,
+      "feedback": 0.08,
+      "envelope": {
+        "attack":  0.001,
+        "decay":   0.8,
+        "sustain": 0.0,
+        "decay2":  0,
+        "release": 0.15
+      }
+    }
+  ],
+
+  "algorithm": [
+    [0, 1],
+    [2, 3]
+  ],
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "lfos": []
+}

@@ -1,0 +1,31 @@
+{
+  "type": "osc",
+  "name": "C64 Arpeggio",
+  "version": "1.0",
+
+  "voices": 2,
+  "stealPolicy": "oldest",
+  "pan": 0,
+  "transpose": 0,
+
+  "oscillators": [
+    { "waveform": "square", "dutyCycle": 0.5, "level": 0.5 }
+  ],
+
+  "envelope": {
+    "attack":  0.001,
+    "decay":   0.04,
+    "sustain": 0.8,
+    "decay2":  0,
+    "release": 0.04
+  },
+
+  "filter": { "type": "lowpass", "frequency": 4000, "Q": 3 },
+
+  "arpeggio": {
+    "steps": [0, 4, 7, 12],
+    "rate": 15
+  },
+
+  "lfos": []
+}

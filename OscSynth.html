@@ -170,11 +170,21 @@
     <div class="ctrl">
       <label>Instrument</label>
       <select id="inst-sel">
-        <option value="0">Pulse 25%</option>
-        <option value="1">Pulse 50%</option>
-        <option value="2">Triangle</option>
-        <option value="3">Noise</option>
-        <option value="4">Fat Triangle</option>
+        <optgroup label="NES">
+          <option value="0">Pulse 25%</option>
+          <option value="1">Pulse 50%</option>
+          <option value="5">Pulse 12.5%</option>
+          <option value="2">Triangle</option>
+          <option value="3">Noise</option>
+        </optgroup>
+        <optgroup label="Other">
+          <option value="4">Fat Triangle</option>
+        </optgroup>
+        <optgroup label="C64">
+          <option value="6">C64 Lead</option>
+          <option value="7">C64 Bass</option>
+          <option value="8">C64 Arpeggio</option>
+        </optgroup>
       </select>
     </div>
 
@@ -223,11 +233,15 @@
     let instruments = [];
     try {
       instruments = await Promise.all([
-        'instruments/nes-pulse-25.json',
-        'instruments/nes-pulse-50.json',
-        'instruments/nes-triangle.json',
-        'instruments/nes-noise.json',
-        'instruments/fat-triangle.json',
+        'instruments/nes-pulse-25.json',    // 0
+        'instruments/nes-pulse-50.json',    // 1
+        'instruments/nes-triangle.json',    // 2
+        'instruments/nes-noise.json',       // 3
+        'instruments/fat-triangle.json',    // 4
+        'instruments/nes-pulse-12.json',    // 5
+        'instruments/c64-lead.json',        // 6
+        'instruments/c64-bass.json',        // 7
+        'instruments/c64-arp.json',         // 8
       ].map(u => audio.loadInstrument(u, { channel: 'synth' })));
 
       document.getElementById('status').innerHTML =

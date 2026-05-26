@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir -Recurse -Filter \"*.ts\" -o -Filter \"*.js\" -o -Filter \"*.wgsl\")",
+      "Bash(Select-Object FullName)",
+      "Bash(dir c:\\\\code\\\\2d-engine)"
+    ]
+  }
+}
