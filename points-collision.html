@@ -196,12 +196,6 @@
             const canvas = document.getElementById('engine');
             const engine = await Engine.init(canvas, 480, 270);
 
-            const ballImg     = await loadImage('white_ball.png');
-            const ballTexture = await Texture.create(engine.device, ballImg);
-            const ballSprite  = new Sprite(ballTexture, {
-                x: 0, y: 0, width: BALL_SIZE, height: BALL_SIZE,
-            });
-
             let particles     = Array.from({ length: 500 }, () => makeParticle(true));
             let colliderType  = 'sphere';
             let ballT = 0, ballX = EMITTER_X, ballVx = 0;
@@ -265,19 +259,15 @@
                 // ── Render ─────────────────────────────────────────────
                 engine.backbuffer.clear(0, 0, 0);
 
-                // Layer 1 — particles (drawn behind the ball).
-                engine.backbuffer.layer([]);
+                // Layer 1 — particles (drawn behind the bounding box).
+                engine.backbuffer.layer();
                 for (const p of particles) {
                     engine.backbuffer.drawPoint(p.x, p.y, 100, 200, 255);
                 }
 
-                // Layer 2 — ball sprite then collider outline on top of it.
-                // Sprites are batched before points within a layer, so the
-                // outline always sits visually in front of the ball texture.
-                engine.backbuffer.layer([]);
-                ballSprite.x = Math.round(ballX - BALL_SIZE / 2);
-                ballSprite.y = Math.round(BALL_Y - BALL_SIZE / 2);
-                engine.backbuffer.draw(ballSprite);
+                // Layer 2 — collider outline
+                // outline always sits visually in front of the particles.
+                engine.backbuffer.layer();
 
                 if (colliderType === 'sphere') {
                     drawSphereOutline(engine.backbuffer, ballX);
