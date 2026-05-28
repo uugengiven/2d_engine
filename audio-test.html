@@ -100,11 +100,40 @@
   </div>
   <div id="listen-tests"></div>
 
+  <!-- ── timing alignment ── -->
+  <h2>Timing Alignment <span style="font-size:0.65rem;color:#3a4a5e;text-transform:none;letter-spacing:0">(NES Pulse 12 vs Mell Flute sampler)</span></h2>
+  <div class="bar">
+    <button id="timing-play-btn">▶ Start</button>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:0.68rem;color:#566880;text-transform:uppercase;letter-spacing:1px">Interval</span>
+      <select id="timing-interval">
+        <option value="0.75">80 BPM</option>
+        <option value="0.5" selected>120 BPM</option>
+        <option value="0.375">160 BPM</option>
+        <option value="0.25">240 BPM</option>
+      </select>
+    </div>
+    <span id="timing-status" style="font-size:0.72rem;color:#3a4a5e">Loads on first Start.</span>
+  </div>
+  <div class="bar" style="gap:6px;align-items:center;margin-top:4px">
+    <span style="font-size:0.68rem;color:#566880;text-transform:uppercase;letter-spacing:1px">Sampler offset</span>
+    <button id="t-m10">−10 ms</button>
+    <button id="t-m1">−1 ms</button>
+    <span id="timing-offset" style="font-size:1.1rem;color:#6ab8f0;min-width:80px;text-align:center;display:inline-block">0 ms</span>
+    <button id="t-p1">+1 ms</button>
+    <button id="t-p10">+10 ms</button>
+    <button id="t-zero" style="color:#8898b0">↺ 0</button>
+  </div>
+  <div class="note" style="margin-bottom:20px">
+    Positive offset = sampler fires later than osc. Adjust until both onsets sound simultaneous — that value is the measured delay.
+  </div>
+
   <div class="summary" id="summary" style="display:none"></div>
 
   <script type="module">
     import { AudioManager } from './engine/audio.js';
     import { OscSynth }     from './engine/synth.js';
+    import { SamplerSynth } from './engine/sampler-synth.js';
     import { Sequencer }    from './engine/sequencer.js';
 
     // ── setup ─────────────────────────────────────────────────────────────────
@@ -598,6 +627,106 @@
       document.getElementById('auto-summary').innerHTML =
         `<span class="${failed > 0 ? 'err' : 'ok'}">${passed}/${done} passed${failed > 0 ? `, ${failed} failed` : ''}</span>`;
     }
+
+    // ── timing alignment ─────────────────────────────────────────────────────
+    let timingOsc      = null;
+    let timingSampler  = null;
+    let timingRunning  = false;
+    let timingTimer    = null;
+    let timingNext     = 0;
+    let timingOffsetMs = 0;
+    let timingReady    = false;
+
+    const TIMING_NOTE     = 60;   // C4
+    const TIMING_NOTE_DUR = 0.15; // note length in seconds
+    const TIMING_AHEAD    = 0.1;  // scheduler lookahead in seconds
+
+    async function ensureTimingInsts() {
+      if (timingReady) return true;
+      document.getElementById('timing-status').textContent = 'Loading samples…';
+      try {
+        const p12Url  = 'instruments/nes-pulse-12.json';
+        const mellUrl = 'instruments/mell-flute-multi.json';
+        const [p12Def, mellDef] = await Promise.all([
+          fetch(p12Url).then(r => r.json()),
+          fetch(mellUrl).then(r => r.json()),
+        ]);
+        const zones = await SamplerSynth.decodeZones(audio.context, mellDef, mellUrl);
+        const ch = audio.getChannel('test');
+        timingOsc     = new OscSynth(audio.context, ch, p12Def, { voices: 2 });
+        timingSampler = new SamplerSynth(audio.context, ch, mellDef, zones, { voices: 2 });
+        allInsts.push(timingOsc);
+        document.getElementById('timing-status').innerHTML = '<span class="ok">Ready.</span>';
+        timingReady = true;
+        return true;
+      } catch (e) {
+        document.getElementById('timing-status').innerHTML = `<span class="err">Load error: ${e.message}</span>`;
+        timingReady = false;
+        return false;
+      }
+    }
+
+    function timingTick() {
+      if (!timingRunning) return;
+      const interval  = +document.getElementById('timing-interval').value;
+      const now       = audio.context.currentTime;
+      const horizon   = now + TIMING_AHEAD;
+      const offsetSec = timingOffsetMs / 1000;
+
+      while (timingNext < horizon) {
+        const t      = timingNext;
+        const oscOff = t + TIMING_NOTE_DUR;
+
+        timingOsc.noteOn(TIMING_NOTE, 0.8, t);
+        const oscDelay = Math.max(0, (oscOff - now) * 1000);
+        setTimeout(() => timingOsc.noteOff(TIMING_NOTE, t, oscOff), oscDelay);
+
+        const st         = t + offsetSec;
+        const samplerOff = st + TIMING_NOTE_DUR;
+        timingSampler.noteOn(TIMING_NOTE, 0.8, st);
+        const samplerDelay = Math.max(0, (samplerOff - now) * 1000);
+        setTimeout(() => timingSampler.noteOff(TIMING_NOTE, st, samplerOff), samplerDelay);
+
+        timingNext += interval;
+      }
+      timingTimer = setTimeout(timingTick, 25);
+    }
+
+    function updateOffsetDisplay() {
+      const sign = timingOffsetMs > 0 ? '+' : '';
+      document.getElementById('timing-offset').textContent = sign + timingOffsetMs + ' ms';
+    }
+
+    document.getElementById('timing-play-btn').addEventListener('click', async () => {
+      await audio.resume();
+      if (timingRunning) {
+        timingRunning = false;
+        clearTimeout(timingTimer);
+        timingOsc?.allNotesOff();
+        timingSampler?.allNotesOff();
+        document.getElementById('timing-play-btn').textContent = '▶ Start';
+        document.getElementById('timing-play-btn').classList.remove('playing');
+      } else {
+        const ok = await ensureTimingInsts();
+        if (!ok) return;
+        timingRunning = true;
+        timingNext    = audio.context.currentTime + 0.1;
+        document.getElementById('timing-play-btn').textContent = '■ Stop';
+        document.getElementById('timing-play-btn').classList.add('playing');
+        timingTick();
+      }
+    });
+
+    function nudgeOffset(delta) {
+      timingOffsetMs = Math.max(-500, Math.min(500, timingOffsetMs + delta));
+      updateOffsetDisplay();
+    }
+
+    document.getElementById('t-m10').addEventListener('click',  () => nudgeOffset(-10));
+    document.getElementById('t-m1').addEventListener('click',   () => nudgeOffset(-1));
+    document.getElementById('t-p1').addEventListener('click',   () => nudgeOffset(+1));
+    document.getElementById('t-p10').addEventListener('click',  () => nudgeOffset(+10));
+    document.getElementById('t-zero').addEventListener('click', () => { timingOffsetMs = 0; updateOffsetDisplay(); });
 
     // ── init ──────────────────────────────────────────────────────────────────
     renderAutoTests();

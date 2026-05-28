@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sampler</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #090912;
+      color: #c0cce0;
+      font-family: 'Courier New', monospace;
+      padding: 28px 24px;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      color: #6ab8f0;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+
+    h2 {
+      font-size: 0.72rem;
+      color: #3a4a5e;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      margin-bottom: 12px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+
+    .ctrl {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .ctrl label {
+      font-size: 0.68rem;
+      color: #566880;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    select {
+      background: #111120;
+      border: 1px solid #253050;
+      color: #c0cce0;
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 5px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    select:focus { outline: none; border-color: #6ab8f0; }
+
+    input[type=range] {
+      width: 110px;
+      cursor: pointer;
+      accent-color: #6ab8f0;
+    }
+
+    .val {
+      font-size: 0.8rem;
+      color: #6ab8f0;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    /* ── zone map ── */
+    .zone-map-wrap {
+      margin-bottom: 24px;
+    }
+
+    #zone-map {
+      position: relative;
+      height: 28px;
+      background: #0e0e1a;
+      border: 1px solid #1e2438;
+      border-radius: 3px;
+      overflow: hidden;
+      max-width: 800px;
+    }
+
+    .zone-bar {
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      border-radius: 2px;
+      opacity: 0.7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.55rem;
+      color: #090912;
+      font-weight: bold;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .zone-cursor {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #f0f0a0;
+      pointer-events: none;
+      display: none;
+    }
+
+    /* ── keyboard ── */
+    .kb-label {
+      font-size: 0.65rem;
+      color: #3a4a5e;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    .kb-wrap {
+      overflow-x: auto;
+      padding-bottom: 12px;
+      margin-bottom: 24px;
+    }
+
+    #keyboard {
+      position: relative;
+      display: inline-block;
+      user-select: none;
+    }
+
+    .key {
+      position: absolute;
+      border-radius: 0 0 4px 4px;
+      cursor: pointer;
+      transition: background 0.04s;
+    }
+    .white-key {
+      background: #d0d8e4;
+      border: 1px solid #3a4a5e;
+      z-index: 0;
+    }
+    .white-key:hover   { background: #e2eaf5; }
+    .white-key.pressed { background: #6ab8f0; }
+
+    .black-key {
+      background: #161828;
+      border: 1px solid #090912;
+      z-index: 1;
+    }
+    .black-key:hover   { background: #252845; }
+    .black-key.pressed { background: #3a7aaa; }
+
+    /* ── status ── */
+    #status {
+      margin-top: 22px;
+      font-size: 0.72rem;
+      color: #3a4a5e;
+    }
+    #status .ok  { color: #5db87a; }
+    #status .err { color: #f06a6a; }
+
+    .note-badge {
+      font-size: 0.75rem;
+      color: #3a4a5e;
+      min-width: 60px;
+    }
+    .note-badge span { color: #6ab8f0; }
+  </style>
+</head>
+<body>
+  <h1>Sampler</h1>
+
+  <div class="controls">
+    <div class="ctrl">
+      <label>Instrument</label>
+      <select id="inst-sel">
+        <option value="0">Mell Flute — Multi</option>
+        <option value="1">Mell Flute — C3 only</option>
+      </select>
+    </div>
+
+    <div class="ctrl">
+      <label>Volume</label>
+      <input type="range" id="vol" min="0" max="1" step="0.01" value="0.75">
+      <span class="val" id="vol-val">0.75</span>
+    </div>
+
+    <div class="note-badge">note <span id="note-name">—</span></div>
+  </div>
+
+  <!-- ── zone map ── -->
+  <h2>Zone Map</h2>
+  <div class="zone-map-wrap">
+    <div id="zone-map"><div class="zone-cursor" id="zone-cursor"></div></div>
+  </div>
+
+  <!-- ── keyboard ── -->
+  <div class="kb-label">Keyboard &nbsp;·&nbsp; C2 – C6</div>
+  <div class="kb-wrap">
+    <div id="keyboard"></div>
+  </div>
+
+  <div id="status">Loading samples…</div>
+
+  <script type="module">
+    import { AudioManager }  from './engine/audio.js';
+    import { SamplerSynth }  from './engine/sampler-synth.js';
+
+    const INST_URLS = [
+      'instruments/mell-flute-multi.json',
+      'instruments/mell-flute-c3.json',
+    ];
+
+    const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    function noteName(n) { return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1); }
+
+    // ── audio setup ───────────────────────────────────────────────────────────
+    const audio = new AudioManager();
+    audio.createChannel('sampler', { volume: 0.9 });
+
+    let audioReady = false;
+    async function ensureAudio() {
+      if (!audioReady) { await audio.resume(); audioReady = true; }
+    }
+
+    let instDefs    = [];
+    let instruments = [];
+    let activeIdx   = 0;
+
+    try {
+      instDefs = await Promise.all(INST_URLS.map(u => fetch(u).then(r => r.json())));
+
+      // Pre-decode all zone buffers. Each instrument gets its own decoded zones
+      // so multiple SamplerSynth instances can be created cheaply from the same data.
+      const decodedZones = await Promise.all(
+        instDefs.map((def, i) => SamplerSynth.decodeZones(audio.context, def, INST_URLS[i]))
+      );
+
+      const ch = audio.getChannel('sampler');
+      instruments = instDefs.map((def, i) => new SamplerSynth(audio.context, ch, def, decodedZones[i]));
+
+      document.getElementById('status').innerHTML =
+        '<span class="ok">Ready.</span> Click keys to play.';
+    } catch (e) {
+      document.getElementById('status').innerHTML =
+        `<span class="err">Load error: ${e.message}</span>`;
+      throw e;
+    }
+
+    // ── zone map ──────────────────────────────────────────────────────────────
+    const ZONE_COLORS = [
+      '#3a7ab8','#5a9a6a','#9a6a3a','#7a3a9a','#8a7a2a',
+      '#3a8a8a','#9a3a5a','#5a6a9a','#6a9a3a','#8a4a2a',
+      '#4a6a8a','#8a3a7a',
+    ];
+    const KB_START = 36; // C2
+    const KB_END   = 84; // C6
+    const KB_RANGE = KB_END - KB_START;
+
+    function buildZoneMap(def) {
+      const mapEl   = document.getElementById('zone-map');
+      // Remove all zone bars (keep cursor)
+      [...mapEl.querySelectorAll('.zone-bar')].forEach(el => el.remove());
+
+      (def.zones ?? []).forEach((z, i) => {
+        const lo = Math.max(z.loNote ?? 0,   KB_START);
+        const hi = Math.min(z.hiNote ?? 127, KB_END);
+        if (lo > KB_END || hi < KB_START) return;
+
+        const left  = ((lo - KB_START) / KB_RANGE) * 100;
+        const right = ((KB_RANGE - (hi - KB_START)) / KB_RANGE) * 100;
+        const bar   = document.createElement('div');
+        bar.className = 'zone-bar';
+        bar.style.cssText = `left:${left}%; right:${right}%; background:${ZONE_COLORS[i % ZONE_COLORS.length]}`;
+        bar.textContent = noteName(z.rootNote ?? 60);
+        mapEl.insertBefore(bar, document.getElementById('zone-cursor'));
+      });
+    }
+
+    function updateZoneCursor(note) {
+      const cursor = document.getElementById('zone-cursor');
+      if (note == null) { cursor.style.display = 'none'; return; }
+      const pct = ((note - KB_START) / KB_RANGE) * 100;
+      cursor.style.cssText = `display:block; left:${pct}%`;
+    }
+
+    buildZoneMap(instDefs[0]);
+
+    // ── instrument switch ─────────────────────────────────────────────────────
+    document.getElementById('inst-sel').addEventListener('change', e => {
+      instruments[activeIdx]?.allNotesOff();
+      activeIdx = +e.target.value;
+      buildZoneMap(instDefs[activeIdx]);
+    });
+
+    // ── volume ────────────────────────────────────────────────────────────────
+    const volSlider = document.getElementById('vol');
+    const volVal    = document.getElementById('vol-val');
+    volSlider.addEventListener('input', () => {
+      audio.volume = +volSlider.value;
+      volVal.textContent = (+volSlider.value).toFixed(2);
+    });
+    audio.volume = +volSlider.value;
+
+    // ── keyboard ──────────────────────────────────────────────────────────────
+    const IS_BLACK = [false,true,false,true,false,false,true,false,true,false,true,false];
+    const WHITE_W  = 34, WHITE_H = 122, BLACK_W = 22, BLACK_H = 76;
+
+    const kbEl   = document.getElementById('keyboard');
+    const whiteX = new Map();
+    let wx = 0;
+    for (let n = KB_START; n <= KB_END; n++) {
+      if (!IS_BLACK[n % 12]) { whiteX.set(n, wx); wx += WHITE_W; }
+    }
+    kbEl.style.width  = wx + 'px';
+    kbEl.style.height = WHITE_H + 'px';
+
+    function makeKey(note, x, w, h, cls) {
+      const el = document.createElement('div');
+      el.className = `key ${cls}`;
+      el.dataset.note = note;
+      el.style.cssText = `left:${x}px; width:${w}px; height:${h}px;`;
+      return el;
+    }
+
+    for (const [n, x] of whiteX) kbEl.appendChild(makeKey(n, x, WHITE_W, WHITE_H, 'white-key'));
+    for (let n = KB_START; n <= KB_END; n++) {
+      if (!IS_BLACK[n % 12]) continue;
+      const px = whiteX.get(n - 1);
+      if (px == null) continue;
+      kbEl.appendChild(makeKey(n, px + WHITE_W - Math.floor(BLACK_W / 2), BLACK_W, BLACK_H, 'black-key'));
+    }
+
+    const heldNotes = new Set();
+    const noteNameEl = document.getElementById('note-name');
+
+    function pressKey(note) {
+      if (heldNotes.has(note)) return;
+      heldNotes.add(note);
+      instruments[activeIdx].noteOn(note, 0.8);
+      kbEl.querySelector(`[data-note="${note}"]`)?.classList.add('pressed');
+      noteNameEl.textContent = noteName(note);
+      updateZoneCursor(note);
+    }
+
+    function releaseKey(note) {
+      if (!heldNotes.has(note)) return;
+      heldNotes.delete(note);
+      instruments[activeIdx].noteOff(note);
+      kbEl.querySelector(`[data-note="${note}"]`)?.classList.remove('pressed');
+      if (heldNotes.size === 0) {
+        noteNameEl.textContent = '—';
+        updateZoneCursor(null);
+      }
+    }
+
+    kbEl.addEventListener('mousedown', async e => {
+      const key = e.target.closest('.key');
+      if (!key) return;
+      e.preventDefault();
+      await ensureAudio();
+      pressKey(+key.dataset.note);
+    });
+
+    kbEl.addEventListener('mousemove', e => {
+      if (e.buttons !== 1) return;
+      const key = e.target.closest('.key');
+      if (!key) return;
+      const note = +key.dataset.note;
+      for (const held of [...heldNotes]) if (held !== note) releaseKey(held);
+      pressKey(note);
+    });
+
+    window.addEventListener('mouseup', () => {
+      for (const note of [...heldNotes]) releaseKey(note);
+    });
+
+    // ── computer keyboard ─────────────────────────────────────────────────────
+    // Two rows: bottom (z-m) = white keys from C4, top (q-u) = one octave up
+    const KEY_MAP = {
+      z:60, s:61, x:62, d:63, c:64, v:65, g:66, b:67, h:68, n:69, j:70, m:71,
+      q:72, 2:73, w:74, 3:75, e:76, r:77, 5:78, t:79, 6:80, y:81, 7:82, u:83,
+    };
+
+    window.addEventListener('keydown', async e => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const note = KEY_MAP[e.key.toLowerCase()];
+      if (note == null) return;
+      await ensureAudio();
+      pressKey(note);
+    });
+
+    window.addEventListener('keyup', e => {
+      const note = KEY_MAP[e.key.toLowerCase()];
+      if (note != null) releaseKey(note);
+    });
+  </script>
+</body>
+</html>

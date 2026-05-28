@@ -1,5 +1,6 @@
-import { OscSynth } from './synth.js';
-import { FmSynth }  from './fm-synth.js';
+import { OscSynth }     from './synth.js';
+import { FmSynth }      from './fm-synth.js';
+import { SamplerSynth } from './sampler-synth.js';
 
 function generateIR(context, duration = 2.0, decay = 2.0) {
     const length = Math.ceil(context.sampleRate * duration);
@@ -382,6 +383,9 @@ export class AudioManager {
         if (def.type === 'fm') {
             await this.loadFmWorklet();
             return new FmSynth(this.#context, ch, def, { voices: options.voices });
+        }
+        if (def.type === 'sampler') {
+            return SamplerSynth.load(this.#context, ch, def, url, { voices: options.voices });
         }
         await this.loadSynthWorklet();
         return new OscSynth(this.#context, ch, def, { voices: options.voices });

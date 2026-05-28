@@ -1,0 +1,19 @@
+{
+  "type": "sampler",
+  "name": "Mell Flute (C3 only)",
+  "voices": 8,
+  "stealPolicy": "oldest",
+
+  "envelope": {
+    "attack":  0.01,
+    "decay":   0.1,
+    "sustain": 0.9,
+    "release": 0.4
+  },
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "zones": [
+    { "sample": "samples/Mell Flutes - Mell Flute C3.wav", "rootNote": 48, "loNote": 0, "hiNote": 127, "loopStart": 0, "loopEnd": 130973 }
+  ]
+}

@@ -447,11 +447,12 @@
   <div id="status">Loading instruments…</div>
 
   <script type="module">
-    import { AudioManager } from './engine/audio.js';
-    import { OscSynth }     from './engine/synth.js';
-    import { FmSynth }      from './engine/fm-synth.js';
-    import { Sequencer }    from './engine/sequencer.js';
-    import { parseMidi }    from './engine/midi-import.js';
+    import { AudioManager }  from './engine/audio.js';
+    import { OscSynth }      from './engine/synth.js';
+    import { FmSynth }       from './engine/fm-synth.js';
+    import { SamplerSynth }  from './engine/sampler-synth.js';
+    import { Sequencer }     from './engine/sequencer.js';
+    import { parseMidi }     from './engine/midi-import.js';
 
     // ── constants ─────────────────────────────────────────────────────────────
     const INST_URLS = [
@@ -476,6 +477,8 @@
       'instruments/snes-strings.json',      // 18
       'instruments/snes-flute.json',        // 19
       'instruments/snes-choir.json',        // 20
+      'instruments/mell-flute-multi.json',  // 21
+      'instruments/mell-flute-c3.json',     // 22
     ];
     const INST_NAMES = [
       'Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Tri',
@@ -484,6 +487,7 @@
       'C64 Lead', 'C64 Bass', 'C64 Arp',
       'Gen Bass', 'Gen Lead', 'Gen Strings', 'Gen Organ',
       'SNES Piano', 'SNES Strings', 'SNES Flute', 'SNES Choir',
+      'Mell Flute', 'Mell Flute C3',
     ];
     const INST_SHORT = [
       'P25', 'P50', 'TRI', 'NOI', 'FAT',
@@ -492,6 +496,7 @@
       'C6L', 'C6B', 'C6A',
       'GNB', 'GNL', 'GNS', 'GNO',
       'SNP', 'SNS', 'SNF', 'SNC',
+      'MLF', 'MLC',
     ];
     const INST_GROUPS = [
       { label: 'NES',        indices: [0, 1, 9, 2, 3] },
@@ -500,6 +505,7 @@
       { label: 'C64',        indices: [10, 11, 12] },
       { label: 'Genesis',    indices: [13, 14, 15, 16] },
       { label: 'SNES / PSX', indices: [17, 18, 19, 20] },
+      { label: 'Samples',    indices: [21, 22] },
     ];
 
     function instOptsHtml(selectedIdx) {
@@ -522,9 +528,16 @@
 
     // Load raw JSON definitions — each track creates its own synth instance
     // from these so multiple tracks using the same instrument never share a voice pool.
+    // Sampler instruments also pre-decode their audio buffers here so createTrackInst
+    // can remain synchronous.
     let instrumentDefs = [];
     try {
       instrumentDefs = await Promise.all(INST_URLS.map(u => fetch(u).then(r => r.json())));
+      await Promise.all(instrumentDefs.map((def, i) => {
+        if (def.type !== 'sampler') return null;
+        return SamplerSynth.decodeZones(audio.context, def, INST_URLS[i])
+          .then(zones => { def._decodedZones = zones; });
+      }));
       setStatus('<span class="ok">Ready.</span>');
     } catch (e) {
       setStatus(`<span class="err">Load error: ${e.message}</span>`);
@@ -535,15 +548,15 @@
       const def = instrumentDefs[instIdx] ?? instrumentDefs[0];
       const vc  = voiceOverride ?? def.voices ?? 4;
       const ch  = audio.getChannel('tracker');
-      return def.type === 'fm'
-        ? new FmSynth(audio.context, ch, def, { voices: vc })
-        : new OscSynth(audio.context, ch, def, { voices: vc });
+      if (def.type === 'fm')      return new FmSynth(audio.context, ch, def, { voices: vc });
+      if (def.type === 'sampler') return new SamplerSynth(audio.context, ch, def, def._decodedZones, { voices: vc });
+      return new OscSynth(audio.context, ch, def, { voices: vc });
     }
 
     const seq = new Sequencer(audio.context);
 
     // ── state ─────────────────────────────────────────────────────────────────
-    // tracks: song-level synth instances (OscSynth or FmSynth), persistent across pattern switches.
+    // tracks: song-level synth instances (OscSynth, FmSynth, or SamplerSynth), persistent across pattern switches.
     // patterns[i].cells[trackId]: note data for each track, keyed by track id.
     // Separating instruments from note data means pattern switches never
     // recreate audio nodes, and instruments can be swapped seamlessly mid-play.

@@ -122,11 +122,11 @@ export class OscSynth {
      *   When provided, skips release if the current voice for this note started
      *   after this timestamp (stale noteOff from a prior voice that was already stolen).
      */
-    noteOff(midiNote, noteStartedAt = null) {
+    noteOff(midiNote, noteStartedAt = null, when = null) {
         const voice = this.#voices.find(v => v.note === midiNote && v.state === 'playing');
         if (!voice) return;
         if (noteStartedAt != null && voice.noteStartTime > noteStartedAt + 0.020) return;
-        this.#releaseVoice(voice, null);
+        this.#releaseVoice(voice, when);
     }
 
     /**

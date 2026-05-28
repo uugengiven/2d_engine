@@ -179,7 +179,7 @@ export class Sequencer {
             const { time, instrument, note, noteStartTime } = this.#pendingNoteOffs.shift();
             // Delay the JS call so it fires close to the actual audio time
             const delayMs = Math.max(0, (time - this.#ctx.currentTime) * 1000);
-            setTimeout(() => instrument.noteOff(note, noteStartTime), delayMs);
+            setTimeout(() => instrument.noteOff(note, noteStartTime, time), delayMs);
         }
     }
 }

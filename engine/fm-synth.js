@@ -98,11 +98,11 @@ export class FmSynth {
         });
     }
 
-    noteOff(midiNote, noteStartedAt = null) {
+    noteOff(midiNote, noteStartedAt = null, when = null) {
         const voice = this.#voices.find(v => v.note === midiNote && v.state === 'playing');
         if (!voice) return;
         if (noteStartedAt != null && voice.noteStartTime > noteStartedAt + 0.020) return;
-        this.#releaseVoice(voice, null);
+        this.#releaseVoice(voice, when);
     }
 
     setFilter({ type, frequency, Q } = {}) {
