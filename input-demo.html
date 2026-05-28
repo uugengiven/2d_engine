@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Input Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #0c0c10;
+            color: #888;
+            font-family: monospace;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        h1 { color: #ccc; font-size: 13px; letter-spacing: 3px; font-weight: normal; }
+
+        #keyboard {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            width: 840px;
+            user-select: none;
+        }
+        .kb-row { display: flex; gap: 3px; }
+        .key {
+            display: flex;
+            align-items: flex-start;
+            padding: 5px 5px 0;
+            height: 36px;
+            background: #18181f;
+            border: 1px solid #2a2a35;
+            border-bottom: 3px solid #111116;
+            border-radius: 4px;
+            font-size: 9px;
+            color: #555;
+            overflow: hidden;
+            white-space: nowrap;
+            transition: background 0.04s, color 0.04s, border-color 0.04s,
+                        margin-top 0.04s, border-bottom-width 0.04s;
+        }
+        .key.pressed { border-bottom-width: 1px; margin-top: 2px; }
+        .key-spacer  { flex-shrink: 0; }
+
+        #info { display: flex; gap: 24px; font-size: 11px; }
+        .info-label { color: #444; }
+        #last-key   { color: #fff; }
+
+        #panels { display: flex; gap: 16px; width: 840px; }
+        #sidebar { display: flex; flex-direction: column; gap: 10px; flex: 0 0 184px; }
+
+        .panel {
+            background: #13131a;
+            border: 1px solid #222;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .panel-title { font-size: 9px; letter-spacing: 2px; color: #3a3a4a; margin-bottom: 8px; }
+
+        .mouse-buttons { display: flex; gap: 4px; margin-bottom: 8px; }
+        .mbtn {
+            flex: 1; height: 48px;
+            display: flex; align-items: center; justify-content: center;
+            background: #0e0e14; border: 1px solid #222; border-radius: 3px;
+            font-size: 10px; color: #444;
+            transition: background 0.04s, color 0.04s;
+        }
+        .mbtn.pressed { background: #1a5fff; color: #fff; border-color: #4a7fff; }
+        .stat { font-size: 10px; color: #444; margin-top: 4px; }
+        .stat b { color: #888; font-weight: normal; }
+
+        #gp-content { font-size: 10px; color: #444; white-space: pre; line-height: 1.6; }
+
+        canvas { display: block; image-rendering: pixelated; }
+    </style>
+</head>
+<body>
+    <h1>INPUT DEMO</h1>
+    <div id="keyboard"></div>
+    <div id="info">
+        <div><span class="info-label">last key  </span><span id="last-key">—</span></div>
+        <div><span class="info-label">gamepad   </span><span id="gp-status">not connected</span></div>
+    </div>
+    <div id="panels">
+        <div id="sidebar">
+            <div class="panel">
+                <div class="panel-title">MOUSE</div>
+                <div class="mouse-buttons">
+                    <div class="mbtn" id="mbtn-0">L</div>
+                    <div class="mbtn" id="mbtn-1">M</div>
+                    <div class="mbtn" id="mbtn-2">R</div>
+                </div>
+                <div class="stat">x  <b id="mx">0</b></div>
+                <div class="stat">y  <b id="my">0</b></div>
+                <div class="stat">scroll  <b id="mscroll">0</b></div>
+            </div>
+            <div class="panel">
+                <div class="panel-title">GAMEPAD 0</div>
+                <div id="gp-content">—</div>
+            </div>
+        </div>
+        <canvas id="engine" style="width: 640px; height: 480px;"></canvas>
+    </div>
+
+    <script type="module">
+        import { Engine } from './engine/engine.js';
+        import { Input }  from './engine/input.js';
+
+        const EW = 320, EH = 240;
+        const GRAVITY = 55;
+        const PER_KEY = 3;
+
+        // ── Keyboard layout ───────────────────────────────────────────
+        // { code, label, flex } for keys; { spacer: true, flex } for gaps
+        const ROWS = [
+            [
+                { code: 'Escape', label: 'Esc', flex: 1 },
+                { spacer: true, flex: 0.75 },
+                { code: 'F1',  label: 'F1',  flex: 0.9 }, { code: 'F2',  label: 'F2',  flex: 0.9 },
+                { code: 'F3',  label: 'F3',  flex: 0.9 }, { code: 'F4',  label: 'F4',  flex: 0.9 },
+                { spacer: true, flex: 0.5 },
+                { code: 'F5',  label: 'F5',  flex: 0.9 }, { code: 'F6',  label: 'F6',  flex: 0.9 },
+                { code: 'F7',  label: 'F7',  flex: 0.9 }, { code: 'F8',  label: 'F8',  flex: 0.9 },
+                { spacer: true, flex: 0.5 },
+                { code: 'F9',  label: 'F9',  flex: 0.9 }, { code: 'F10', label: 'F10', flex: 0.9 },
+                { code: 'F11', label: 'F11', flex: 0.9 }, { code: 'F12', label: 'F12', flex: 0.9 },
+            ],
+            [
+                { code: 'Backquote', label: '`', flex: 1 },
+                { code: 'Digit1', label: '1', flex: 1 }, { code: 'Digit2', label: '2', flex: 1 },
+                { code: 'Digit3', label: '3', flex: 1 }, { code: 'Digit4', label: '4', flex: 1 },
+                { code: 'Digit5', label: '5', flex: 1 }, { code: 'Digit6', label: '6', flex: 1 },
+                { code: 'Digit7', label: '7', flex: 1 }, { code: 'Digit8', label: '8', flex: 1 },
+                { code: 'Digit9', label: '9', flex: 1 }, { code: 'Digit0', label: '0', flex: 1 },
+                { code: 'Minus',     label: '-', flex: 1 }, { code: 'Equal',  label: '=', flex: 1 },
+                { code: 'Backspace', label: '⌫', flex: 2 },
+            ],
+            [
+                { code: 'Tab',          label: 'Tab', flex: 1.5 },
+                { code: 'KeyQ', label: 'Q', flex: 1 }, { code: 'KeyW', label: 'W', flex: 1 },
+                { code: 'KeyE', label: 'E', flex: 1 }, { code: 'KeyR', label: 'R', flex: 1 },
+                { code: 'KeyT', label: 'T', flex: 1 }, { code: 'KeyY', label: 'Y', flex: 1 },
+                { code: 'KeyU', label: 'U', flex: 1 }, { code: 'KeyI', label: 'I', flex: 1 },
+                { code: 'KeyO', label: 'O', flex: 1 }, { code: 'KeyP', label: 'P', flex: 1 },
+                { code: 'BracketLeft',  label: '[',   flex: 1   },
+                { code: 'BracketRight', label: ']',   flex: 1   },
+                { code: 'Backslash',    label: '\\',  flex: 1.5 },
+            ],
+            [
+                { code: 'CapsLock', label: 'Caps', flex: 1.75 },
+                { code: 'KeyA', label: 'A', flex: 1 }, { code: 'KeyS', label: 'S', flex: 1 },
+                { code: 'KeyD', label: 'D', flex: 1 }, { code: 'KeyF', label: 'F', flex: 1 },
+                { code: 'KeyG', label: 'G', flex: 1 }, { code: 'KeyH', label: 'H', flex: 1 },
+                { code: 'KeyJ', label: 'J', flex: 1 }, { code: 'KeyK', label: 'K', flex: 1 },
+                { code: 'KeyL', label: 'L', flex: 1 },
+                { code: 'Semicolon', label: ';',     flex: 1    },
+                { code: 'Quote',     label: "'",     flex: 1    },
+                { code: 'Enter',     label: 'Enter', flex: 2.25 },
+            ],
+            [
+                { code: 'ShiftLeft',  label: 'Shift', flex: 2.25 },
+                { code: 'KeyZ', label: 'Z', flex: 1 }, { code: 'KeyX', label: 'X', flex: 1 },
+                { code: 'KeyC', label: 'C', flex: 1 }, { code: 'KeyV', label: 'V', flex: 1 },
+                { code: 'KeyB', label: 'B', flex: 1 }, { code: 'KeyN', label: 'N', flex: 1 },
+                { code: 'KeyM', label: 'M', flex: 1 },
+                { code: 'Comma',      label: ',',     flex: 1    },
+                { code: 'Period',     label: '.',     flex: 1    },
+                { code: 'Slash',      label: '/',     flex: 1    },
+                { code: 'ShiftRight', label: 'Shift', flex: 2.75 },
+            ],
+            [
+                { code: 'ControlLeft',  label: 'Ctrl', flex: 1.25 },
+                { code: 'MetaLeft',     label: '⌘',    flex: 1.25 },
+                { code: 'AltLeft',      label: 'Alt',  flex: 1.25 },
+                { code: 'Space',        label: '',     flex: 6.25 },
+                { code: 'AltRight',     label: 'Alt',  flex: 1.25 },
+                { code: 'MetaRight',    label: '⌘',    flex: 1.25 },
+                { code: 'ContextMenu',  label: '☰',    flex: 1.25 },
+                { code: 'ControlRight', label: 'Ctrl', flex: 1.25 },
+            ],
+            // Arrow keys — large leading spacer pushes them to the right
+            [
+                { spacer: true, flex: 13 },
+                { code: 'ArrowUp', label: '↑', flex: 1 },
+                { spacer: true, flex: 1 },
+            ],
+            [
+                { spacer: true, flex: 12 },
+                { code: 'ArrowLeft',  label: '←', flex: 1 },
+                { code: 'ArrowDown',  label: '↓', flex: 1 },
+                { code: 'ArrowRight', label: '→', flex: 1 },
+            ],
+        ];
+
+        // ── Color ─────────────────────────────────────────────────────
+        function keyHash(code) {
+            let h = 5381;
+            for (let i = 0; i < code.length; i++) h = (Math.imul(h, 31) + code.charCodeAt(i)) >>> 0;
+            return h;
+        }
+        function keyHue(code) { return (keyHash(code) * 137) % 360; }
+        function hsl255(hDeg, s, l) {
+            const h = hDeg / 360;
+            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            const p = 2 * l - q;
+            const ch = (t) => {
+                if (t < 0) t += 1; if (t > 1) t -= 1;
+                if (t < 1/6) return p + (q - p) * 6 * t;
+                if (t < 1/2) return q;
+                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                return p;
+            };
+            return [ch(h + 1/3), ch(h), ch(h - 1/3)].map(v => Math.round(v * 255));
+        }
+        function keyRgb(code)    { return hsl255(keyHue(code), 0.9, 0.58); }
+        function keyRgbCss(code) { const [r, g, b] = keyRgb(code); return `rgb(${r},${g},${b})`; }
+
+        // ── Build keyboard DOM ────────────────────────────────────────
+        const kbEl   = document.getElementById('keyboard');
+        const keyEls = new Map(); // code → element
+
+        for (const row of ROWS) {
+            const rowEl = document.createElement('div');
+            rowEl.className = 'kb-row';
+            for (const k of row) {
+                const el = document.createElement('div');
+                if (k.spacer) {
+                    el.className = 'key-spacer';
+                    el.style.flex = k.flex;
+                } else {
+                    el.className = 'key';
+                    el.style.flex = k.flex;
+                    el.textContent = k.label;
+                    keyEls.set(k.code, el);
+                }
+                rowEl.appendChild(el);
+            }
+            kbEl.appendChild(rowEl);
+        }
+
+        // ── Particles ─────────────────────────────────────────────────
+        const particles = [];
+
+        function spawn(code) {
+            const [r, g, b] = keyRgb(code);
+            const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.75;
+            const speed = 32 + Math.random() * 38;
+            particles.push({
+                x:  6 + (keyHash(code) % (EW - 12)),
+                y:  EH - 2,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                r, g, b,
+                age: 0,
+                maxAge: 1.2 + Math.random() * 1.0,
+            });
+        }
+
+        function tickParticles(dt) {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.age += dt;
+                if (p.age >= p.maxAge) { particles.splice(i, 1); continue; }
+                p.vy += GRAVITY * dt;
+                p.x  += p.vx * dt;
+                p.y  += p.vy * dt;
+            }
+        }
+
+        // ── Main ──────────────────────────────────────────────────────
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, EW, EH);
+            const input  = new Input(canvas, EW, EH);
+
+            // Stop browsers from hijacking common game inputs
+            input.preventDefault('Space');
+            input.preventDefault('ArrowUp');
+            input.preventDefault('ArrowDown');
+            input.preventDefault('ArrowLeft');
+            input.preventDefault('ArrowRight');
+            input.preventDefault('Slash');      // Firefox quick-find
+            input.preventDefault('Mouse1');     // middle-click scroll mode
+            input.preventDefault('Mouse2');     // right-click context menu
+
+            // Track last key pressed for the display
+            document.addEventListener('keydown', e => {
+                const isForm = ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)
+                             || e.target.isContentEditable;
+                if (!isForm) document.getElementById('last-key').textContent = e.code;
+            });
+
+            const mbtns  = [0, 1, 2].map(i => document.getElementById(`mbtn-${i}`));
+            const mxEl   = document.getElementById('mx');
+            const myEl   = document.getElementById('my');
+            const mscEl  = document.getElementById('mscroll');
+            const gpStat = document.getElementById('gp-status');
+            const gpCon  = document.getElementById('gp-content');
+            const GP_BTNS = ['a','b','x','y','lb','rb','lt','rt','start','select','up','down','left','right'];
+
+            let last = null;
+
+            function loop(ts) {
+                const dt = last === null ? 0 : Math.min((ts - last) / 1000, 0.05);
+                last = ts;
+
+                input.update();
+
+                // Keyboard: light up held keys, spawn particles
+                for (const [code, el] of keyEls) {
+                    const held = input.key(code);
+                    el.classList.toggle('pressed', held);
+                    if (held) {
+                        el.style.background  = keyRgbCss(code);
+                        el.style.color       = '#000';
+                        el.style.borderColor = 'transparent';
+                        for (let i = 0; i < PER_KEY; i++) spawn(code);
+                    } else {
+                        el.style.background  = '';
+                        el.style.color       = '';
+                        el.style.borderColor = '';
+                    }
+                }
+
+                // Mouse: show button state, coords, spawn particles for held buttons
+                const m = input.mouse;
+                for (let i = 0; i < 3; i++) {
+                    mbtns[i].classList.toggle('pressed', m.button(i));
+                    if (m.button(i)) for (let j = 0; j < PER_KEY; j++) spawn(`Mouse${i}`);
+                }
+                mxEl.textContent  = Math.round(m.x);
+                myEl.textContent  = Math.round(m.y);
+                mscEl.textContent = Math.round(m.scroll.dy);
+
+                // Gamepad: show button names and axes, spawn particles for held buttons
+                const gp = input.gamepad(0);
+                if (gp.connected) {
+                    gpStat.textContent = 'connected';
+                    const held = GP_BTNS.filter(n => gp.button(n)).join('  ') || '—';
+                    gpCon.textContent =
+                        `btns  ${held}\nL     ${gp.axis(0).toFixed(2)}, ${gp.axis(1).toFixed(2)}\nR     ${gp.axis(2).toFixed(2)}, ${gp.axis(3).toFixed(2)}`;
+                    for (const n of GP_BTNS) {
+                        if (gp.button(n)) for (let j = 0; j < PER_KEY; j++) spawn(`Gp_${n}`);
+                    }
+                } else {
+                    gpStat.textContent = 'not connected';
+                    gpCon.textContent  = '—';
+                }
+
+                tickParticles(dt);
+
+                // Render
+                engine.backbuffer.clear(8, 8, 14);
+                for (const p of particles) {
+                    const a = Math.round((1 - p.age / p.maxAge) * 255);
+                    engine.backbuffer.drawPoint(p.x, p.y, p.r, p.g, p.b, a);
+                }
+                engine.buffer_flip();
+
+                requestAnimationFrame(loop);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>
