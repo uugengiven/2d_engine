@@ -6,6 +6,9 @@ The engine audio stack has three layers that compose cleanly:
 |---|---|---|
 | Infrastructure | `AudioManager` | Context, channels, loading |
 | Synthesis | `OscSynth` | Synthesized instruments (NES/SNES style) |
+| Synthesis | `FmSynth` | Frequency-modulation synthesis (AudioWorklet) |
+| Synthesis | `SamplerSynth` | Sample-based instruments with pitch-shifting and looping |
+| SF2 Import | `SF2Parser` | Parse SoundFont 2 files into engine-native instruments |
 | Sequencing | `Sequencer` | Pattern-based music scheduling |
 
 Sample playback (`Sound`) is also available for pre-recorded audio files.
@@ -244,6 +247,161 @@ Multiple oscillators in the array are summed. Use `detune` for warm chorus, `sem
 ```
 
 All oscillators in a voice share one ADSR envelope.
+
+---
+
+## SamplerSynth
+
+Sample-based instruments that load audio files (WAV/OGG/MP3), pitch-shift them via playback rate, and support looping. The public API is identical to `OscSynth`, so samplers and oscillator instruments are interchangeable in the Sequencer and tracker.
+
+```js
+// loadInstrument auto-dispatches when def.type === "sampler"
+const flute = await audio.loadInstrument('instruments/mell-flute-multi.json', { channel: 'music' });
+
+flute.noteOn(60, 0.8);          // same API as OscSynth
+flute.noteOn(60, 0.8, when);    // scheduled
+flute.noteOff(60);
+flute.allNotesOff();
+```
+
+### Sampler Instrument JSON Format
+
+```json
+{
+  "type": "sampler",
+  "name": "Mell Flute (Multi)",
+  "voices": 8,
+  "stealPolicy": "oldest",
+
+  "envelope": {
+    "attack":  0.01,
+    "decay":   0.1,
+    "sustain": 0.9,
+    "release": 0.4
+  },
+
+  "filter": { "type": "allpass", "frequency": 20000, "Q": 1 },
+
+  "zones": [
+    { "sample": "samples/Flute C3.wav", "rootNote": 48, "loNote": 44, "hiNote": 51, "loopStart": 0, "loopEnd": 130973 },
+    { "sample": "samples/Flute F3.wav", "rootNote": 53, "loNote": 52, "hiNote": 55, "loopStart": 0, "loopEnd": 130973 }
+  ]
+}
+```
+
+#### Zone fields
+
+| Field | Description |
+|---|---|
+| `sample` | Path to audio file, relative to the JSON. `#` in filenames is safe — it is encoded automatically. |
+| `rootNote` | MIDI note at which the sample plays at its original pitch |
+| `loNote` / `hiNote` | MIDI range this zone handles (inclusive). Zones must tile 0–127 with no gaps. |
+| `loopStart` / `loopEnd` | Loop region in **samples** (not seconds). Set both to `0` for one-shot playback. |
+| `loVel` / `hiVel` | Optional velocity range. Defaults to 0–127 if omitted. |
+
+Pitch-shifting is done by adjusting the `AudioBufferSourceNode` playback rate: one semitone away from `rootNote` = rate × 2^(1/12). There is no quality limit — audible artifacts appear beyond roughly ±12–14 semitones, so use enough zones to keep each one close to its root.
+
+### Pre-decoding zones
+
+`loadInstrument` decodes all audio files at call time (each file is fetched and passed through `decodeAudioData`). For instruments that will be used immediately, this is fine. For instruments that need to be ready instantly without a network round-trip, pre-decode during a load screen:
+
+```js
+import { SamplerSynth } from './engine/sampler-synth.js';
+
+const def  = await fetch('instruments/mell-flute-multi.json').then(r => r.json());
+const zones = await SamplerSynth.decodeZones(audio.context, def, 'instruments/mell-flute-multi.json');
+
+// zones are now decoded AudioBuffers — store them alongside def
+def._decodedZones = zones;
+
+// Later, construct instantly (no async needed):
+const flute = new SamplerSynth(audio.context, channel, def, zones, { voices: 8 });
+```
+
+---
+
+## SF2 Parser
+
+`SF2Parser` reads a SoundFont 2 binary file and converts its presets into engine-native `SamplerSynth` instances. All audio data lives in memory as `AudioBuffer` objects — nothing is written to disk.
+
+### Typical workflow
+
+```js
+import { AudioManager } from './engine/audio.js';
+
+const audio = new AudioManager();
+await audio.resume();
+
+// 1. Fetch and parse the SF2 at load time
+const parser = await audio.loadSF2('sounds/GeneralUser.sf2');
+
+// 2. Inspect available presets
+const presets = parser.getPresets();
+// [
+//   { index: 0,  name: 'Yamaha Grand',  bank: 0, program: 0,  isPercussion: false },
+//   { index: 1,  name: 'Bright Piano',  bank: 0, program: 1,  isPercussion: false },
+//   { index: 128, name: 'Standard Kit', bank: 128, program: 0, isPercussion: true },
+//   ...
+// ]
+
+// 3. Build instruments for the presets you need
+const piano  = audio.buildSF2Instrument(parser, 0,  { channel: 'music', voices: 12 });
+const guitar = audio.buildSF2Instrument(parser, 24, { channel: 'music', voices: 6 });
+
+// The parser can be garbage-collected now — all live audio data is inside the SamplerSynth instances
+
+// 4. Use like any other instrument
+piano.noteOn(60, 0.8, scheduledTime);
+piano.noteOff(60, noteStartTime, releaseTime);
+```
+
+### AudioManager methods
+
+```js
+// Fetch an SF2 file and return a parser instance
+const parser = await audio.loadSF2(url);
+
+// Build a single SamplerSynth from a parsed SF2 preset
+const inst = audio.buildSF2Instrument(parser, presetIndex, options);
+```
+
+`options` is the same object accepted by `loadInstrument`: `{ channel, voices }`.
+
+### SF2Parser API
+
+```js
+parser.getPresets()
+// → [{ index, name, bank, program, isPercussion }]
+//   index — pass this to buildInstrument / buildSF2Instrument
+
+parser.buildInstrument(audioContext, presetIndex, options)
+// → { def, zones }  (engine-native format — pass directly to new SamplerSynth())
+
+parser.buildInstruments(audioContext, presetIndices, options)
+// → Map<presetIndex, { def, zones }>  — batch-build multiple presets in one pass
+```
+
+### What the parser handles
+
+| Feature | Notes |
+|---|---|
+| Key ranges | `loNote`/`hiNote` from igen generator 43/44 |
+| Velocity ranges | `loVel`/`hiVel` from igen generator 41/42 |
+| Pitch root | `overridingRootKey` (gen 58) or falls back to sample header root |
+| Loop points | Converted from sample-relative frame offsets to seconds |
+| Loop mode | `sampleModes` bit 0 — looping vs. one-shot |
+| Volume envelope | Attack/hold/decay/sustain/release in timecents/centibels |
+| Stereo samples | Linked left+right pairs decoded into a single 2-channel `AudioBuffer` |
+| Global zones | First instrument bag without a sampleID seeds defaults for all zones |
+| Sample cache | Each unique sample decoded once per `buildInstrument` call |
+| ROM samples | Skipped (hardware-resident Roland samples, absent in normal GM fonts) |
+
+### What the parser does not handle (yet)
+
+- Preset-level generator additions (instrument-level generators cover the vast majority of real GM soundfonts)
+- sm24 chunk (24-bit sample extension — 16-bit is used instead)
+- Modulators
+- Bank/program CC switching at runtime
 
 ---
 
@@ -497,6 +655,13 @@ function swapInstrument(trackId, newUrl) {
 | `instruments/fm-bass.json` | Punchy FM bass with operator feedback |
 | `instruments/fm-brass.json` | Bright brass/horn with vibrato LFO |
 
+**SamplerSynth (type: "sampler")**
+
+| File | Description |
+|---|---|
+| `instruments/mell-flute-multi.json` | Mellotron Flute — 12 zones from F#2–D#5, each ≈3 semitones wide |
+| `instruments/mell-flute-c3.json` | Same sample set, single C3 zone spanning all 128 notes (strong pitch artefacts at extremes) |
+
 ---
 
 ## FM Synthesis
@@ -616,4 +781,6 @@ Same as OscSynth, with additional per-operator level modulation:
 |---|---|
 | `OscSynth.html` | Interactive keyboard + demo sequencer pattern + soundboard |
 | `FmSynth.html` | FM instrument editor — per-operator ADSR, algorithm selector, live editing, JSON export |
+| `Sampler.html` | Sampler test page — instrument dropdown, zone map visualization, interactive keyboard C2–C6 |
 | `tracker.html` | Full pattern editor with per-cell note/velocity/length editing and JSON export |
+| `audio-test.html` | Audio diagnostics: oscilloscope, latency probe, timing alignment tool (sampler vs. osc side-by-side with adjustable offset) |
