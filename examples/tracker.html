@@ -447,38 +447,38 @@
   <div id="status">Loading instruments…</div>
 
   <script type="module">
-    import { AudioManager }  from './engine/audio.js';
-    import { OscSynth }      from './engine/synth.js';
-    import { FmSynth }       from './engine/fm-synth.js';
-    import { SamplerSynth }  from './engine/sampler-synth.js';
-    import { Sequencer }     from './engine/sequencer.js';
-    import { parseMidi }     from './engine/midi-import.js';
+    import { AudioManager }  from '../engine/audio.js';
+    import { OscSynth }      from '../engine/synth.js';
+    import { FmSynth }       from '../engine/fm-synth.js';
+    import { SamplerSynth }  from '../engine/sampler-synth.js';
+    import { Sequencer }     from '../engine/sequencer.js';
+    import { parseMidi }     from '../engine/midi-import.js';
 
     // ── constants ─────────────────────────────────────────────────────────────
     const INST_URLS = [
-      'instruments/nes-pulse-25.json',      //  0
-      'instruments/nes-pulse-50.json',      //  1
-      'instruments/nes-triangle.json',      //  2
-      'instruments/nes-noise.json',         //  3
-      'instruments/fat-triangle.json',      //  4
-      'instruments/fm-bell.json',           //  5
-      'instruments/fm-electric-piano.json', //  6
-      'instruments/fm-bass.json',           //  7
-      'instruments/fm-brass.json',          //  8
-      'instruments/nes-pulse-12.json',      //  9
-      'instruments/c64-lead.json',          // 10
-      'instruments/c64-bass.json',          // 11
-      'instruments/c64-arp.json',           // 12
-      'instruments/genesis-bass.json',      // 13
-      'instruments/genesis-lead.json',      // 14
-      'instruments/genesis-strings.json',   // 15
-      'instruments/genesis-organ.json',     // 16
-      'instruments/snes-piano.json',        // 17
-      'instruments/snes-strings.json',      // 18
-      'instruments/snes-flute.json',        // 19
-      'instruments/snes-choir.json',        // 20
-      'instruments/mell-flute-multi.json',  // 21
-      'instruments/mell-flute-c3.json',     // 22
+      '../instruments/nes-pulse-25.json',      //  0
+      '../instruments/nes-pulse-50.json',      //  1
+      '../instruments/nes-triangle.json',      //  2
+      '../instruments/nes-noise.json',         //  3
+      '../instruments/fat-triangle.json',      //  4
+      '../instruments/fm-bell.json',           //  5
+      '../instruments/fm-electric-piano.json', //  6
+      '../instruments/fm-bass.json',           //  7
+      '../instruments/fm-brass.json',          //  8
+      '../instruments/nes-pulse-12.json',      //  9
+      '../instruments/c64-lead.json',          // 10
+      '../instruments/c64-bass.json',          // 11
+      '../instruments/c64-arp.json',           // 12
+      '../instruments/genesis-bass.json',      // 13
+      '../instruments/genesis-lead.json',      // 14
+      '../instruments/genesis-strings.json',   // 15
+      '../instruments/genesis-organ.json',     // 16
+      '../instruments/snes-piano.json',        // 17
+      '../instruments/snes-strings.json',      // 18
+      '../instruments/snes-flute.json',        // 19
+      '../instruments/snes-choir.json',        // 20
+      '../instruments/mell-flute-multi.json',  // 21
+      '../instruments/mell-flute-c3.json',     // 22
     ];
     const INST_NAMES = [
       'Pulse 25%', 'Pulse 50%', 'Triangle', 'Noise', 'Fat Tri',

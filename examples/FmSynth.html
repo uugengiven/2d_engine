@@ -477,9 +477,9 @@
   <div id="status">Loading instruments…</div>
 
   <script type="module">
-    import { AudioManager } from './engine/audio.js';
-    import { Sequencer }    from './engine/sequencer.js';
-    import { FmSynth }      from './engine/fm-synth.js';
+    import { AudioManager } from '../engine/audio.js';
+    import { Sequencer }    from '../engine/sequencer.js';
+    import { FmSynth }      from '../engine/fm-synth.js';
 
     // ── templates (starting points only — not live parameters) ──────────────
     const TEMPLATES = [
@@ -529,18 +529,18 @@
 
     // ── live instrument definitions (editable copies) ─────────────────────────
     const INST_URLS = [
-      'instruments/fm-bell.json',           // 0
-      'instruments/fm-electric-piano.json', // 1
-      'instruments/fm-bass.json',           // 2
-      'instruments/fm-brass.json',          // 3
-      'instruments/genesis-bass.json',      // 4
-      'instruments/genesis-lead.json',      // 5
-      'instruments/genesis-strings.json',   // 6
-      'instruments/genesis-organ.json',     // 7
-      'instruments/snes-piano.json',        // 8
-      'instruments/snes-strings.json',      // 9
-      'instruments/snes-flute.json',        // 10
-      'instruments/snes-choir.json',        // 11
+      '../instruments/fm-bell.json',           // 0
+      '../instruments/fm-electric-piano.json', // 1
+      '../instruments/fm-bass.json',           // 2
+      '../instruments/fm-brass.json',          // 3
+      '../instruments/genesis-bass.json',      // 4
+      '../instruments/genesis-lead.json',      // 5
+      '../instruments/genesis-strings.json',   // 6
+      '../instruments/genesis-organ.json',     // 7
+      '../instruments/snes-piano.json',        // 8
+      '../instruments/snes-strings.json',      // 9
+      '../instruments/snes-flute.json',        // 10
+      '../instruments/snes-choir.json',        // 11
     ];
 
     let instDefs   = [];   // raw parsed JSON, one per instrument

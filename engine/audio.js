@@ -351,7 +351,7 @@ export class AudioManager {
      * @param {string} [moduleUrl]  defaults to './engine/synth-worklet.js'
      * @returns {Promise<void>}
      */
-    async loadSynthWorklet(moduleUrl = './engine/synth-worklet.js') {
+    async loadSynthWorklet(moduleUrl = '/engine/synth-worklet.js') {
         this.#ensureContext();
         if (!this.#workletLoaded) {
             await this.#context.audioWorklet.addModule(moduleUrl);
@@ -359,7 +359,7 @@ export class AudioManager {
         }
     }
 
-    async loadFmWorklet(moduleUrl = './engine/fm-worklet.js') {
+    async loadFmWorklet(moduleUrl = '/engine/fm-worklet.js') {
         this.#ensureContext();
         if (!this.#fmWorkletLoaded) {
             await this.#context.audioWorklet.addModule(moduleUrl);

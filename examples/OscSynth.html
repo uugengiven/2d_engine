@@ -223,8 +223,8 @@
   <div id="status">Loading instruments…</div>
 
   <script type="module">
-    import { AudioManager } from './engine/audio.js';
-    import { Sequencer }    from './engine/sequencer.js';
+    import { AudioManager } from '../engine/audio.js';
+    import { Sequencer }    from '../engine/sequencer.js';
 
     // ── audio setup ──────────────────────────────────────────────────────────
     const audio = new AudioManager();
@@ -233,15 +233,15 @@
     let instruments = [];
     try {
       instruments = await Promise.all([
-        'instruments/nes-pulse-25.json',    // 0
-        'instruments/nes-pulse-50.json',    // 1
-        'instruments/nes-triangle.json',    // 2
-        'instruments/nes-noise.json',       // 3
-        'instruments/fat-triangle.json',    // 4
-        'instruments/nes-pulse-12.json',    // 5
-        'instruments/c64-lead.json',        // 6
-        'instruments/c64-bass.json',        // 7
-        'instruments/c64-arp.json',         // 8
+        '../instruments/nes-pulse-25.json',    // 0
+        '../instruments/nes-pulse-50.json',    // 1
+        '../instruments/nes-triangle.json',    // 2
+        '../instruments/nes-noise.json',       // 3
+        '../instruments/fat-triangle.json',    // 4
+        '../instruments/nes-pulse-12.json',    // 5
+        '../instruments/c64-lead.json',        // 6
+        '../instruments/c64-bass.json',        // 7
+        '../instruments/c64-arp.json',         // 8
       ].map(u => audio.loadInstrument(u, { channel: 'synth' })));
 
       document.getElementById('status').innerHTML =
@@ -258,8 +258,8 @@
     // Dedicated SFX pools — separate voice allocations so SFX never steal from
     // the keyboard or sequencer instruments.
     const [sfxPulse, sfxNoise] = await Promise.all([
-      audio.loadInstrument('instruments/nes-pulse-25.json', { channel: 'synth', voices: 6 }),
-      audio.loadInstrument('instruments/nes-noise.json',   { channel: 'synth', voices: 4 }),
+      audio.loadInstrument('../instruments/nes-pulse-25.json', { channel: 'synth', voices: 6 }),
+      audio.loadInstrument('../instruments/nes-noise.json',   { channel: 'synth', voices: 4 }),
     ]);
 
     // ── sequencer & demo pattern ──────────────────────────────────────────────
