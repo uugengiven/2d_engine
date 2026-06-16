@@ -1,6 +1,7 @@
 import { OscSynth }     from './synth.js';
 import { FmSynth }      from './fm-synth.js';
 import { SamplerSynth } from './sampler-synth.js';
+import { SF2Parser }    from './sf2-parser.js';
 
 function generateIR(context, duration = 2.0, decay = 2.0) {
     const length = Math.ceil(context.sampleRate * duration);
@@ -400,6 +401,37 @@ export class AudioManager {
             ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
             : this.#defaultChannel;
         return new FmSynth(this.#context, ch, def, { voices: options.voices });
+    }
+
+    /**
+     * Fetch an SF2 file and return a parsed SF2Parser ready for instrument extraction.
+     * Call parser.getPresets() to list available presets, then buildSF2Instrument()
+     * to decode the ones you want into live SamplerSynth instances.
+     * @param {string} url
+     * @returns {Promise<SF2Parser>}
+     */
+    async loadSF2(url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`SF2 load failed (${response.status}): ${url}`);
+        const buf = await response.arrayBuffer();
+        return new SF2Parser(buf);
+    }
+
+    /**
+     * Decode a preset from a parsed SF2Parser into a live SamplerSynth.
+     * Synchronous sample decoding happens here — call at load time, not mid-frame.
+     * @param {SF2Parser} parser
+     * @param {number} presetIndex          — from parser.getPresets()[n].index
+     * @param {{ channel?: string, voices?: number, stealPolicy?: string }} [options]
+     * @returns {SamplerSynth}
+     */
+    buildSF2Instrument(parser, presetIndex, options = {}) {
+        this.#ensureContext();
+        const ch = options.channel
+            ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
+            : this.#defaultChannel;
+        const { def, zones } = parser.buildInstrument(this.#context, presetIndex, options);
+        return new SamplerSynth(this.#context, ch, def, zones, options);
     }
 
     /**
