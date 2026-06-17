@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Font Bitmap — Text Demo</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas { image-rendering: pixelated; border: 2px solid #444; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="width: 960px; height: 720px;"></canvas>
+
+    <script type="module">
+        import { Engine }  from '../engine/engine.js';
+        import { Texture } from '../engine/texture.js';
+        import { Sprite }  from '../engine/sprite.js';
+        import { FONT_COLS, FONT_ROWS, CELL_WIDTH, CELL_HEIGHT, charToFrame } from '../images/monogram-font.js';
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload  = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        // Builds one Sprite per character, all sharing the same font Texture.
+        function makeText(texture, text, x, y, cellW, cellH, color) {
+            const sprites = [];
+            for (let i = 0; i < text.length; i++) {
+                const sprite = new Sprite(texture, {
+                    x: x + i * cellW, y, width: cellW, height: cellH,
+                    frameIndex: charToFrame(text[i]),
+                });
+                sprite.overlay = true;
+                sprite.vertexColors = [color, color, color, color];
+                sprites.push(sprite);
+            }
+            return sprites;
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 320, 240);
+
+            const img     = await loadImage('../images/monogram-bitmap.png');
+            const texture = await Texture.create(engine.device, img, { cols: FONT_COLS, rows: FONT_ROWS });
+
+            const SCALE = 3;
+            const cellW = CELL_WIDTH  * SCALE;
+            const cellH = CELL_HEIGHT * SCALE;
+
+            const text  = 'Hello World';
+            const white = { r: 255, g: 255, b: 255, a: 255 };
+            const startX = (320 - text.length * cellW) / 2;
+            const startY = (240 - cellH) / 2;
+
+            const glyphs = makeText(texture, text, startX, startY, cellW, cellH, white);
+
+            engine.backbuffer.clear(20, 18, 30);
+            for (const g of glyphs) engine.backbuffer.draw(g);
+            engine.buffer_flip();
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

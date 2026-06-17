@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas-Drawn Textures Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 12px;
+        }
+        canvas#engine { border: 2px solid #444; }
+        #container { position: relative; }
+        .label {
+            position: absolute;
+            color: #888;
+            font: 11px monospace;
+            text-align: center;
+            pointer-events: none;
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="engine" style="width: 960px; height: 720px;"></canvas>
+        <div class="label" style="left: 80px;  top: 305px;">Circle — fill + arc</div>
+        <div class="label" style="left: 680px; top: 305px;">Square — rotate + fillRect</div>
+        <div class="label" style="left: 80px;  top: 665px;">Lines — strokes from center</div>
+        <div class="label" style="left: 680px; top: 665px;">Badge — gradient + stroke + text</div>
+    </div>
+
+    <script type="module">
+        import { Engine }  from '../engine/engine.js';
+        import { Texture } from '../engine/texture.js';
+        import { Sprite }  from '../engine/sprite.js';
+
+        // Each of these builds a 64x64 OffscreenCanvas, draws into it with the normal
+        // Canvas 2D API, and hands it straight to Texture.create — no Image, no file,
+        // no engine-specific drawing calls. Whatever isn't painted stays transparent.
+
+        function makeCircleCanvas() {
+            const canvas = new OffscreenCanvas(64, 64);
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#4fd1ff';
+            ctx.beginPath();
+            ctx.arc(32, 32, 28, 0, Math.PI * 2);
+            ctx.fill();
+            return canvas;
+        }
+
+        function makeSquareCanvas() {
+            const canvas = new OffscreenCanvas(64, 64);
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ff66cc';
+            ctx.translate(32, 32);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillRect(-22, -22, 44, 44);
+            return canvas;
+        }
+
+        function makeLinesCanvas() {
+            const canvas = new OffscreenCanvas(64, 64);
+            const ctx = canvas.getContext('2d');
+            ctx.strokeStyle = '#ffe066';
+            ctx.lineWidth = 3;
+            ctx.translate(32, 32);
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(Math.cos(angle) * 28, Math.sin(angle) * 28);
+                ctx.stroke();
+            }
+            return canvas;
+        }
+
+        // A more involved example — gradient fill, a stroked outline, and drawn text
+        // all composited onto one canvas before it ever becomes a Texture.
+        function makeBadgeCanvas() {
+            const canvas = new OffscreenCanvas(64, 64);
+            const ctx = canvas.getContext('2d');
+
+            const gradient = ctx.createRadialGradient(32, 32, 4, 32, 32, 30);
+            gradient.addColorStop(0, '#ffffff');
+            gradient.addColorStop(1, '#7a5cff');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(32, 32, 28, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = '#2a1b66';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            ctx.fillStyle = '#2a1b66';
+            ctx.font = 'bold 22px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Σ', 32, 34);
+
+            return canvas;
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 320, 240);
+
+            const sources = [makeCircleCanvas(), makeSquareCanvas(), makeLinesCanvas(), makeBadgeCanvas()];
+            const textures = await Promise.all(sources.map(src => Texture.create(engine.device, src)));
+
+            const positions = [
+                { x: 25,  y: 25  }, // circle
+                { x: 225, y: 25  }, // square
+                { x: 25,  y: 145 }, // lines
+                { x: 225, y: 145 }, // badge
+            ];
+            const sprites = textures.map((tex, i) => new Sprite(tex, {
+                x: positions[i].x, y: positions[i].y, width: 64, height: 64,
+            }));
+
+            engine.backbuffer.clear(20, 18, 30);
+            for (const s of sprites) engine.backbuffer.draw(s);
+            engine.buffer_flip();
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

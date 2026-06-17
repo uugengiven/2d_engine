@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Font Bitmap — Single Texture Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 12px;
+        }
+        canvas { image-rendering: pixelated; border: 2px solid #444; }
+        #container { position: relative; }
+        .label {
+            position: absolute;
+            color: #888;
+            font: 11px monospace;
+            text-align: center;
+            pointer-events: none;
+            width: 160px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="engine" style="width: 960px; height: 720px;"></canvas>
+        <div class="label" style="left: -16px; top: 320px;">Original (black on transparent)</div>
+        <div class="label" style="left: 624px; top: 320px;">Overlay recolor</div>
+        <div class="label" style="left: 312px; top: 660px;">Same texture, five sprites, one flip</div>
+    </div>
+
+    <script type="module">
+        import { Engine }  from '../engine/engine.js';
+        import { Texture } from '../engine/texture.js';
+        import { Sprite }  from '../engine/sprite.js';
+
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload  = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        function setColor(sprite, r, g, b, a = 255) {
+            sprite.overlay = true;
+            sprite.vertexColors = [
+                { r, g, b, a }, { r, g, b, a },
+                { r, g, b, a }, { r, g, b, a },
+            ];
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 320, 240);
+
+            const img     = await loadImage('../images/monogram-bitmap.png');
+            const texture = await Texture.create(engine.device, img); // single image, no cols/rows
+
+            // ── Original, drawn at native size, no overlay ──────────────────
+            const original = new Sprite(texture, { x: 16, y: 16, width: 96, height: 96 });
+
+            // ── Same texture, second Sprite instance, recolored ─────────────
+            const recolored = new Sprite(texture, { x: 208, y: 16, width: 96, height: 96 });
+            setColor(recolored, 255, 210, 60); // amber
+
+            // ── Same texture again, five small Sprite instances in a row ────
+            // Each is its own object — draw() stores a reference, and buffer_flip()
+            // reads x/y/vertexColors once when it builds the frame, so reusing a single
+            // mutated Sprite across multiple draw() calls would just draw its *last*
+            // values five times. Many cheap Sprites sharing one Texture is the pattern.
+            const STAMP = 48, GAP = 14, COUNT = 5;
+            const startX = (320 - (COUNT * STAMP + (COUNT - 1) * GAP)) / 2;
+            const stampColors = [
+                [255, 80, 80], [255, 170, 60], [255, 230, 80], [120, 220, 120], [110, 170, 255],
+            ];
+            const stamps = stampColors.map(([r, g, b], i) => {
+                const s = new Sprite(texture, {
+                    x: startX + i * (STAMP + GAP), y: 150, width: STAMP, height: STAMP,
+                });
+                setColor(s, r, g, b);
+                return s;
+            });
+
+            engine.backbuffer.clear(20, 18, 30);
+            engine.backbuffer.draw(original);
+            engine.backbuffer.draw(recolored);
+            for (const s of stamps) engine.backbuffer.draw(s);
+            engine.buffer_flip();
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animation Loop Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 14px;
+            color: #999;
+            font: 12px monospace;
+        }
+        canvas { image-rendering: pixelated; border: 2px solid #444; }
+        #legend { display: flex; flex-direction: column; gap: 4px; }
+        #legend span { color: #ccc; }
+    </style>
+</head>
+<body>
+    <canvas id="engine" style="width: 960px; height: 720px;"></canvas>
+    <div id="legend">
+        <div><span style="color:#4fd1ff;">Cyan circle</span> — position recomputed from elapsed time every frame (sin/cos orbit), pixels/second</div>
+        <div><span style="color:#ff66cc;">Magenta square</span> — constant velocity × dt, flips sign at the walls, pixels/second</div>
+        <div><span style="color:#ffe066;">Yellow diamond</span> — accelerates to a capped top speed; force (not a reset) flips it at the walls, pixels/frame</div>
+    </div>
+
+    <script type="module">
+        import { Engine }  from '../engine/engine.js';
+        import { Texture } from '../engine/texture.js';
+        import { Sprite }  from '../engine/sprite.js';
+
+        function shapeCanvas(draw) {
+            const canvas = new OffscreenCanvas(32, 32);
+            draw(canvas.getContext('2d'));
+            return canvas;
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 320, 240);
+
+            const circleTex = await Texture.create(engine.device, shapeCanvas(ctx => {
+                ctx.fillStyle = '#4fd1ff';
+                ctx.beginPath();
+                ctx.arc(16, 16, 14, 0, Math.PI * 2);
+                ctx.fill();
+            }));
+            const squareTex = await Texture.create(engine.device, shapeCanvas(ctx => {
+                ctx.fillStyle = '#ff66cc';
+                ctx.fillRect(2, 2, 28, 28);
+            }));
+            const diamondTex = await Texture.create(engine.device, shapeCanvas(ctx => {
+                ctx.fillStyle = '#ffe066';
+                ctx.translate(16, 16);
+                ctx.rotate(Math.PI / 4);
+                ctx.fillRect(-12, -12, 24, 24);
+            }));
+
+            const orbit  = new Sprite(circleTex,  { x: 0,  y: 0,   width: 32, height: 32 });
+            const bounce = new Sprite(squareTex,  { x: 240, y: 20, width: 32, height: 32 });
+            const slide  = new Sprite(diamondTex, { x: 20,  y: 190, width: 32, height: 32 });
+
+            // --- Orbit: pure function of elapsed time, recomputed fresh every frame ---
+            const ORBIT_CENTER = { x: 90, y: 90 };
+            const ORBIT_RADIUS = 50;
+            const ORBIT_SPEED  = 1.4; // radians/second
+            let elapsed = 0;
+
+            // --- Bounce: constant pixels/second velocity, flips at the walls ---
+            const BOUNCE_TOP    = 20;
+            const BOUNCE_BOTTOM = 110;
+            const BOUNCE_SPEED  = 90; // px/second
+            let vy = BOUNCE_SPEED;
+
+            // --- Slide: pixels/frame acceleration, no dt anywhere in this block ---
+            const SLIDE_LEFT      = 30;
+            const SLIDE_RIGHT     = 258;
+            const SLIDE_FORCE     = 0.12; // px/frame, added to speed every frame
+            const SLIDE_MAX_SPEED = 2.4;  // speed cap — force keeps pushing once this is hit, it just stops accelerating
+            let xSpeed = 0;
+            let xForce = SLIDE_FORCE;
+
+            let lastTime = null;
+
+            function loop(timestamp) {
+                const rawDt = lastTime === null ? 0 : (timestamp - lastTime) / 1000;
+                const dt = Math.min(rawDt, 0.1); // clamp so a stalled tab doesn't teleport anything
+                lastTime = timestamp;
+                elapsed += dt;
+
+                // Orbit — angle is just elapsed time times angular speed
+                const angle = elapsed * ORBIT_SPEED;
+                orbit.x = ORBIT_CENTER.x + Math.cos(angle) * ORBIT_RADIUS - 16;
+                orbit.y = ORBIT_CENTER.y + Math.sin(angle) * ORBIT_RADIUS - 16;
+
+                // Bounce — velocity scaled by dt, same real-world speed at any refresh rate
+                bounce.y += vy * dt;
+                if (bounce.y <= BOUNCE_TOP) { bounce.y = BOUNCE_TOP; vy = BOUNCE_SPEED; }
+                if (bounce.y >= BOUNCE_BOTTOM) { bounce.y = BOUNCE_BOTTOM; vy = -BOUNCE_SPEED; }
+
+                // Slide — speed accelerates toward a capped top speed every frame; direction
+                // only changes because xForce flips sign at the walls, not because speed is
+                // ever reset. On a higher-refresh-rate display this still drifts faster overall,
+                // since every quantity here is a flat per-frame amount, never scaled by dt.
+                xSpeed = Math.max(-SLIDE_MAX_SPEED, Math.min(SLIDE_MAX_SPEED, xSpeed + xForce));
+                slide.x += xSpeed;
+                if (slide.x <= SLIDE_LEFT)  { xForce = Math.abs(SLIDE_FORCE); }
+                if (slide.x >= SLIDE_RIGHT) { xForce = -Math.abs(SLIDE_FORCE); }
+
+                engine.backbuffer.clear(20, 18, 30);
+                engine.backbuffer.draw(orbit);
+                engine.backbuffer.draw(bounce);
+                engine.backbuffer.draw(slide);
+                engine.buffer_flip();
+
+                requestAnimationFrame(loop);
+            }
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>
