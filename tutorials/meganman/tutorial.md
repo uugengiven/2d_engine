@@ -1,8 +1,12 @@
 # Megan Man — Game Engine Tutorial
 
+This is a mostly step by step tutorial, walking through building a small platform in the vein of Megaman. Mostly this will be used to explain concepts of the engine and how to use it to build out your own games.
+
 ## Step 1: Setting Up the Canvas
 
 <!-- Your intro text here — explain what we're building and what this first step covers -->
+
+The graphics portion of the engine run on a website and renders the game to a `<canvas>` element. We can build out our html in any way we like, so long as it includes a canvas element that we can address with something like `document.getElementById`.
 
 Create an `index.html` file with the following structure. We have a border on our canvas to make it visible to you.
 
@@ -35,7 +39,7 @@ Create an `index.html` file with the following structure. We have a border on ou
 
 <!-- Explain the 240×180 internal resolution and why we display it at 3× (720×540) -->
 
-The canvas is displayed at 720×540 but the engine works internally at 240×180 — a classic 4:3 resolution that gives every pixel a nice chunky look. The `Engine.init` call takes the canvas element followed by the internal width and height. This lets us work with our game at our 240x180 no matter what size the game shows up on someone's screen. We currently are telling the canvas to be 720x540 but we could also tell it to be 100% width and height on the screen and it will continue to display with appropriately sized square pixels.
+The canvas is displayed at 720×540 but the engine works internally at 240×180 — a 4:3 resolution that has fewer pixels but will expand and give a nice pixel art look. The `Engine.init` call takes the canvas element followed by the internal width and height. This lets us work with our game at our 240x180 no matter what size the game shows up on someone's screen. We currently are telling the canvas to be 720x540 but we could also tell it to be 100% width and height on the screen and it will continue to display with appropriately sized square pixels.
 
 Add the following `<script>` block just before `</body>`:
 
@@ -68,6 +72,7 @@ Add the following `<script>` block just before `</body>`:
 ## Step 2: Loading the Character Sprite
 
 <!-- Your intro — introduce the character sprite sheet and what we're about to do -->
+2D games are often built with the idea of sprites. A sprite is like a stamp or sticker that you can put onto the screen. New sprites will get drawn on top of old sprites, so in a game, often you will draw the background first, then the level that the player interacts with, then the player and any enemies, and then finally any score or other UI elements at the end. Each frame of the game is built this way, and like with any 2D animation, if frames are played quickly, in order, they give the appearance of motion. The building blocks of this animation are the texture and sprite.
 
 Add `Texture` and `Sprite` to the import line alongside `Engine`, and add a small `loadImage` helper above `main`. The helper is just a thin promise wrapper around the browser's built-in `Image` — nothing engine-specific.
 
@@ -88,13 +93,17 @@ function loadImage(url) {
 
 <!-- Explain what Texture and Sprite are for -->
 
+A texture is a single picture that represents one or more stickers that a sprite may have. A background may just be a single image. A character might have multiple pictures in the texture: one for the character jumping, one for each frame of animation of the character walking, maybe one for the character giving a big thumbs up. A texture may even be a picture that has each letter of a font in a grid.
+
+The sprite then uses a texture and decides what part of that image is drawn and where on the screen it is drawn each frame. If a texture has 8 images of a character running, a sprite will have a single texture and 8 frames and can choose where on the screen to draw any individual frame. We're going to load up a texture and a sprite so we can being drawing our character on the screen and seeing how textures, sprites, and frames work together.
+
 ---
 
 ## Step 3: Showing the Sprite on Screen
 
 <!-- Your intro — explain we're creating a sprite and placing it on screen -->
 
-Inside `main()`, load the image, create a `Texture` from it, then create a `Sprite` and draw it once. The character sprite sheet is a single horizontal row of 27 frames, each 34×35 pixels — passing `cols: 27` to `Texture.create` lets the engine split that row into individually addressable frames.
+Inside `main()`, load the image, create a `Texture` from it, then create a `Sprite` and draw it once. The character sprite sheet is a grid with 8 columns and 4 rows, each cell being 34×35 pixels — passing `cols: 8, rows: 4` to `Texture.create` lets the engine split the rows into individually addressable frames.
 
 ```js
 async function main() {
