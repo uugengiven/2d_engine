@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sprite Manipulation Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 12px;
+        }
+        canvas { image-rendering: pixelated; border: 2px solid #444; }
+        #container { position: relative; }
+        .label {
+            position: absolute;
+            color: #888;
+            font: 11px monospace;
+            text-align: center;
+            pointer-events: none;
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="engine" style="width: 960px; height: 720px;"></canvas>
+        <div class="label" style="left: 95px;  top: 280px;">Rotation</div>
+        <div class="label" style="left: 380px; top: 280px;">Scaling</div>
+        <div class="label" style="left: 665px; top: 280px;">Flip X / Flip Y</div>
+        <div class="label" style="left: 200px; top: 685px;">Palette Swap</div>
+        <div class="label" style="left: 560px; top: 685px;">Vertex Color Tint</div>
+    </div>
+
+    <script type="module">
+        import { Engine }  from '../engine/engine.js';
+        import { Texture } from '../engine/texture.js';
+        import { Sprite }  from '../engine/sprite.js';
+
+        // Every shape on this page is canvas-drawn, same as examples/canvas-image.html —
+        // no image files needed for any of this.
+
+        function shapeCanvas(size, draw) {
+            const canvas = new OffscreenCanvas(size, size);
+            draw(canvas.getContext('2d'), size);
+            return canvas;
+        }
+
+        function makeArrowCanvas(size) {
+            return shapeCanvas(size, (ctx, s) => {
+                ctx.fillStyle = '#4fd1ff';
+                ctx.beginPath();
+                ctx.moveTo(s * 0.50, s * 0.05);
+                ctx.lineTo(s * 0.85, s * 0.50);
+                ctx.lineTo(s * 0.62, s * 0.50);
+                ctx.lineTo(s * 0.62, s * 0.95);
+                ctx.lineTo(s * 0.38, s * 0.95);
+                ctx.lineTo(s * 0.38, s * 0.50);
+                ctx.lineTo(s * 0.15, s * 0.50);
+                ctx.closePath();
+                ctx.fill();
+            });
+        }
+
+        function makeCheckerCanvas(size, cells) {
+            return shapeCanvas(size, (ctx, s) => {
+                const cell = s / cells;
+                for (let y = 0; y < cells; y++) {
+                    for (let x = 0; x < cells; x++) {
+                        ctx.fillStyle = (x + y) % 2 === 0 ? '#ffe066' : '#7a5cff';
+                        ctx.fillRect(x * cell, y * cell, cell, cell);
+                    }
+                }
+            });
+        }
+
+        function makeLetterCanvas(letter, size) {
+            return shapeCanvas(size, (ctx, s) => {
+                ctx.fillStyle = '#3a3a50';
+                ctx.fillRect(0, 0, s, s);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.floor(s * 0.7)}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(letter, s / 2, s / 2 + s * 0.04);
+            });
+        }
+
+        // Rasterized on a cell grid with axis-aligned fillRect instead of ctx.arc — arcs
+        // anti-alias their edge pixels, which blend two colors together and won't match
+        // any single palette entry exactly. Testing each cell's distance from center and
+        // filling a flat rectangle keeps every pixel one exact, swappable color, the way
+        // real pixel art is actually drawn.
+        function makeRingsCanvas(size, cells) {
+            return shapeCanvas(size, (ctx, s) => {
+                const colors = ['#5090ff', '#50ff90', '#ff5050']; // center → edge
+                const cell = s / cells;
+                const center = (cells - 1) / 2;
+                const maxDist = cells / 2;
+                for (let y = 0; y < cells; y++) {
+                    for (let x = 0; x < cells; x++) {
+                        const dist = Math.hypot(x - center, y - center);
+                        const t = dist / maxDist;
+                        if (t > 1) continue; // outside the circle — leave transparent
+                        const idx = Math.min(colors.length - 1, Math.floor(t * colors.length));
+                        ctx.fillStyle = colors[idx];
+                        ctx.fillRect(x * cell, y * cell, cell, cell);
+                    }
+                }
+            });
+        }
+
+        function makeWhiteCircleCanvas(size) {
+            return shapeCanvas(size, (ctx, s) => {
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(s / 2, s / 2, s * 0.45, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // Rotates which channel feeds which — a fixed, GPU-free way to get three
+        // distinct destination palettes out of one set of source colors.
+        function rotateChannels(c) {
+            return { r: c.b, g: c.r, b: c.g, a: c.a };
+        }
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 320, 240);
+
+            // ── Rotation ──────────────────────────────────────────────────
+            const arrowTex = await Texture.create(engine.device, makeArrowCanvas(32));
+            const rotSprite = new Sprite(arrowTex, { x: 33, y: 23, width: 64, height: 64 });
+            // pivotX/pivotY default to the sprite's center — that's what it spins around.
+
+            // ── Scaling ───────────────────────────────────────────────────
+            const checkerTex = await Texture.create(engine.device, makeCheckerCanvas(32, 4));
+            const SCALE_CENTER = { x: 160, y: 55 };
+            const scaleSprite = new Sprite(checkerTex, { x: 0, y: 0, width: 1, height: 1 });
+
+            // ── Flip ──────────────────────────────────────────────────────
+            const letterTex = await Texture.create(engine.device, makeLetterCanvas('F', 48));
+            const flipSprite = new Sprite(letterTex, { x: 227, y: 27, width: 56, height: 56 });
+            let flipTimerX = 0, flipTimerY = 0;
+
+            // ── Palette swap ──────────────────────────────────────────────
+            const ringsCanvas = makeRingsCanvas(64, 16);
+            const ringsTex    = await Texture.create(engine.device, ringsCanvas);
+            const srcColors   = Texture.extractPalette(ringsCanvas);
+            const palSrc      = Texture.createPalette(engine.device, srcColors);
+            // Three fixed destination palettes, built once — cycling is just reassigning
+            // paletteDst, never recreating a texture at runtime.
+            const dstPalettes = [
+                srcColors,
+                srcColors.map(rotateChannels),
+                srcColors.map(c => rotateChannels(rotateChannels(c))),
+            ].map(colors => Texture.createPalette(engine.device, colors));
+
+            const paletteSprite = new Sprite(ringsTex, { x: 68, y: 153, width: 64, height: 64 });
+            paletteSprite.paletteSrc = palSrc;
+            paletteSprite.paletteDst = dstPalettes[0];
+            let paletteIndex = 0;
+            let paletteTimer = 0;
+
+            // ── Vertex color tint ────────────────────────────────────────
+            // Plain white source — multiplying white by any color gives back that color
+            // exactly, which makes the tint easy to read. This sprite never sets `overlay`,
+            // so this is the *multiply* path, not the overlay *replace* path.
+            const circleTex  = await Texture.create(engine.device, makeWhiteCircleCanvas(64));
+            const tintSprite = new Sprite(circleTex, { x: 188, y: 153, width: 64, height: 64 });
+
+            let elapsed = 0;
+            let lastTime = null;
+
+            function loop(timestamp) {
+                const rawDt = lastTime === null ? 0 : (timestamp - lastTime) / 1000;
+                const dt = Math.min(rawDt, 0.1);
+                lastTime = timestamp;
+                elapsed += dt;
+
+                // Rotation — degrees clockwise, free-running
+                rotSprite.rotation = (rotSprite.rotation + 70 * dt) % 360;
+
+                // Scaling — width/height pulse with time; recenter every frame since the
+                // sprite's own size is changing
+                const size = 46 + Math.sin(elapsed * 2) * 18;
+                scaleSprite.width  = size;
+                scaleSprite.height = size;
+                scaleSprite.x = SCALE_CENTER.x - size / 2;
+                scaleSprite.y = SCALE_CENTER.y - size / 2;
+
+                // Flip — flipX and flipY toggle on independent timers so all four
+                // combinations show up over time
+                flipTimerX += dt;
+                if (flipTimerX >= 1.1) { flipSprite.flipX = !flipSprite.flipX; flipTimerX = 0; }
+                flipTimerY += dt;
+                if (flipTimerY >= 1.7) { flipSprite.flipY = !flipSprite.flipY; flipTimerY = 0; }
+
+                // Palette swap — step to the next preset every ~900ms; no texture work here,
+                // just pointing paletteDst at a different already-built palette
+                paletteTimer += dt;
+                if (paletteTimer >= 0.9) {
+                    paletteIndex = (paletteIndex + 1) % dstPalettes.length;
+                    paletteSprite.paletteDst = dstPalettes[paletteIndex];
+                    paletteTimer = 0;
+                }
+
+                // Vertex color tint — smooth rainbow cycle, three sine waves 120° out of phase
+                const hueT = elapsed * 0.6;
+                const r = Math.floor(128 + 127 * Math.sin(hueT));
+                const g = Math.floor(128 + 127 * Math.sin(hueT + 2.094));
+                const b = Math.floor(128 + 127 * Math.sin(hueT + 4.188));
+                const tint = { r, g, b, a: 255 };
+                tintSprite.vertexColors = [tint, tint, tint, tint];
+
+                engine.backbuffer.clear(20, 18, 30);
+                engine.backbuffer.draw(rotSprite);
+                engine.backbuffer.draw(scaleSprite);
+                engine.backbuffer.draw(flipSprite);
+                engine.backbuffer.draw(paletteSprite);
+                engine.backbuffer.draw(tintSprite);
+                engine.buffer_flip();
+
+                requestAnimationFrame(loop);
+            }
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

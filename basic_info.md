@@ -358,6 +358,89 @@ On a 144Hz display this still runs `updateOneFrameWorth()` roughly 60 times a se
 
 ---
 
+## Step 8: Sprite Manipulation — Rotation, Scaling, Flip, Palette Swap, Tint
+
+Five ways to change how a `Sprite` shows up on screen, none of which touch the underlying `Texture`. All five are visible at once in `examples/sprite-manipulation.html`, built entirely from canvas-drawn shapes (no image files needed for any of it).
+
+### Rotation
+
+```js
+sprite.rotation = 45; // degrees, clockwise
+```
+
+`rotation` turns the sprite around `pivotX`/`pivotY`, which default to the sprite's own center. Internally, rotation keeps the corners of the sprite locked to the pixel grid, which allows rotation to look closer to pixel art rotation. To have the best control of how rotation looks, it is often better to draw art at specific points and use those frames instead of rotating a sprite, but it is better to have rotation that isn't perfect than not.
+
+To rotate around a corner instead of the center:
+
+```js
+sprite.pivotX = 0;
+sprite.pivotY = 0;
+```
+
+### Scaling
+
+There's no separate "scale" property — `width` and `height` are already independent of the texture's native pixel size:
+
+```js
+sprite.width  = 128;
+sprite.height = 128;
+```
+
+Scaling is done purely with nearest-neighbor sampling, which means it will be a very pixel art/block scaling up and down. This can cause some weirdness when sliding between sizes, but it is the same weirdness you would remember from the 16 bit game era.
+
+### Flip
+
+```js
+sprite.flipX = true; // mirror horizontally
+sprite.flipY = true; // mirror vertically
+```
+
+Flipping swaps which edge of the texture's UV rectangle is read first — no extra geometry, no resampling. It's how one sheet drawn facing right becomes a character that can also face left, as seen back in the Mega Man tutorial.
+
+### Palette Swap
+
+Recolor a sprite by replacing specific colors, not by replacing the whole texture:
+
+```js
+const colors  = Texture.extractPalette(sourceImageOrCanvas); // unique opaque colors used
+const palSrc  = Texture.createPalette(engine.device, colors);
+const palDst  = Texture.createPalette(engine.device, [
+    { r: 255, g: 0, b: 0 }, // replaces colors[0]
+    { r: 0,   g: 0, b: 255 }, // replaces colors[1]
+    // ...
+]);
+
+sprite.paletteSrc = palSrc;
+sprite.paletteDst = palDst;
+```
+
+This is an old technique from the days of having a color palette for any given screen instead of drawing individual colors on each pixel. While you can do way more these days by drawing any color you want anywhere, palette swapping live is still useful if you want to be able to swap character colors without having to make all new art (think Street Fighter 2 character colors or Mario/Luigi) or even have effect animations in one color that can change to other colors as needed by palette swapping, or even palette animation.
+
+Build the destination palettes once and just reassign `paletteDst` to switch between them — no need to call `createPalette` again unless the actual colors change. Every color does not have to be represented, nor do you have to extract the palette using the engine. If you have a complex character with 16 colors, but their outfit only uses 4 colors and you want to have outfit color changes, you only have to supply those 4 original outfit colors, and then the new palette for those colors, not the full 16 colors of the original art.
+
+### Vertex Color Tint (without `overlay`)
+
+Step 3 covered `overlay`, which *replaces* a sprite's color outright (texture alpha becomes a shape mask, vertex color becomes the fill). Without `overlay`, `vertexColors` instead *multiplies* onto whatever the texture already shows:
+
+```js
+sprite.vertexColors = [
+    { r: 255, g: 120, b: 120, a: 255 },
+    { r: 255, g: 120, b: 120, a: 255 },
+    { r: 255, g: 120, b: 120, a: 255 },
+    { r: 255, g: 120, b: 120, a: 255 },
+];
+```
+
+This works even with no `Light` defined anywhere — the implicit unlit layer still runs `tex_color * vertexColor` before drawing, it just skips the lighting math entirely when there are zero lights. A white sprite tinted this way shows the tint color exactly; a non-white sprite gets that color filtered through its own. The same property also controls alpha, which is the usual way to fade a sprite in or out.
+
+| | `overlay = true` | normal sprite, `vertexColors` set |
+|---|---|---|
+| Texture RGB | ignored | kept, multiplied by tint |
+| Texture alpha | used as shape mask | used as-is |
+| Lighting | never applied | applied if the layer has lights |
+
+---
+
 <!-- Your closing section — the bigger picture: 2D sprites/quads under the hood are
      textured triangles, alpha blending, and a fragment shader; the engine's job is to
      keep that invisible so the mental model stays "stamps on a 2D grid." -->
