@@ -44,12 +44,12 @@ The tileset for levels is ./sprites/tileset.png with 16x16 tiles
 
 I can give more of the tilemap, but the important bits to start are
 
-ground_a_tl [39]
-ground_a_tc [40]
-ground_a_tr [41]
-ground_a_ml [48]
-ground_a_mc [49]
-ground_a_mr [50]
+ground_a_tl [57]
+ground_a_tc [58]
+ground_a_tr [59]
+ground_a_ml [66]
+ground_a_mc [67]
+ground_a_mr [68]
 
 And there is a background plane called /sprites/bg.png that is horizontally tileable. It is 160x240
 

@@ -38,6 +38,32 @@
 
         const GROUND_Y = 150;
 
+        const TILE_SIZE   = 16;
+        const FLOOR_FRAME = 58; // ground_a_tc — the only tile we use for now
+
+        class FloorBlock {
+            constructor(texture, { type, x, y, solid = true }) {
+                this.type   = type;
+                this.x      = x;
+                this.y      = y;
+                this.width  = TILE_SIZE;
+                this.height = TILE_SIZE;
+                this.solid  = solid;
+
+                this.texture = texture;
+                this.sprite  = new Sprite(texture, {
+                    x, y,
+                    width:  TILE_SIZE,
+                    height: TILE_SIZE,
+                    frameIndex: FLOOR_FRAME,
+                });
+            }
+
+            draw(backbuffer) {
+                backbuffer.draw(this.sprite);
+            }
+        }
+
         const STATES = {
             idle:  { frames: [6],           frameMs: 200 },
             run:   { frames: [0,1,2,3,4,5], frameMs: 120 },
@@ -65,12 +91,56 @@
             const img     = await loadImage('sprites/chibi-robot.png');
             const texture = await Texture.create(engine.device, img, { cols: 8, rows: 4 });
 
+            const tilesetImg     = await loadImage('sprites/tileset.png');
+            const tilesetTexture = await Texture.create(engine.device, tilesetImg, { cols: 9, rows: 10 });
+
             const player = new Sprite(texture, {
                 x:     103,
                 y:     GROUND_Y - 35,
                 width:  34,
                 height: 35,
             });
+
+            const floorBlocks = [];
+            for (let i = 0; i < 6; i++) {
+                floorBlocks.push(new FloorBlock(tilesetTexture, {
+                    type: 'ground_a',
+                    x: 72 + i * TILE_SIZE,
+                    y: GROUND_Y,
+                }));
+            }
+
+            // A two-tile raised step at the end of the row
+            for (let i = 0; i < 2; i++) {
+                floorBlocks.push(new FloorBlock(tilesetTexture, {
+                    type: 'ground_a',
+                    x: 72 + (6 + i) * TILE_SIZE,
+                    y: GROUND_Y - TILE_SIZE,
+                }));
+            }
+
+            function isSolidAt(x, y) {
+                for (const block of floorBlocks) {
+                    if (block.solid &&
+                        x >= block.x && x < block.x + block.width &&
+                        y >= block.y && y < block.y + block.height) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function checkFoot(x, feetY) {
+                if (isSolidAt(x, feetY)) {
+                    let y = feetY;
+                    while (isSolidAt(x, y)) y--;
+                    return y;
+                }
+                if (isSolidAt(x, feetY + 1)) {
+                    return feetY;
+                }
+                return null;
+            }
 
             const SPEED = 80;
             let facing       =  1;
@@ -118,13 +188,22 @@
                 if (movingRight) { player.x += hSpeed * dt; facing =  1; }
                 player.flipX = facing === -1;
 
-                // Vertical movement and ground clamp
+                // Vertical movement
                 player.y += vy * dt;
-                if (player.y + player.height >= GROUND_Y) {
-                    player.y  = GROUND_Y - player.height;
+
+                // Ground collision via two foot rays near the player's left/right edges
+                const feetY     = Math.floor(player.y + player.height);
+                const leftFoot  = checkFoot(player.x + 5, feetY);
+                const rightFoot = checkFoot(player.x + player.width - 6, feetY);
+
+                if (leftFoot !== null || rightFoot !== null) {
+                    const resolvedFeetY = Math.min(leftFoot ?? feetY, rightFoot ?? feetY);
+                    player.y  = resolvedFeetY - player.height;
                     vy        = 0;
                     onGround  = true;
                     jumpTimer = 0;
+                } else {
+                    onGround = false;
                 }
 
                 // State selection
@@ -152,9 +231,7 @@
 
                 // Draw
                 engine.backbuffer.clear(30, 20, 40);
-                for (let x = 0; x < 240; x++) {
-                    engine.backbuffer.drawPoint(x, GROUND_Y, 80, 160, 80);
-                }
+                for (const block of floorBlocks) block.draw(engine.backbuffer);
                 engine.backbuffer.draw(player);
                 engine.buffer_flip();
 

@@ -596,3 +596,268 @@ frameInState = state.loop === false
 The `%` path wraps back to zero — that's the loop. The `Math.min` path increments until it hits the last index and then stays there — that's the hold. Since `frameInState` resets to `0` every time the state changes, the jump animation always replays the windup frame on each new jump even though it only plays once.
 
 <!-- Your closing thoughts / lead-in to the next step -->
+
+---
+
+## Step 15: Sprites vs Game Objects
+
+<!-- Your intro — the conceptual section, mostly prose -->
+
+Everything we've drawn so far has been a `Sprite` — a texture, a position, a frame index, some flip/color/rotation state. That's all a `Sprite` knows about. It has no idea it represents a player, no concept of health or velocity, and no opinion about whether something is allowed to stand on it.
+
+A **game object** is a different idea entirely, and the engine doesn't define it for you. A game object is whatever your game needs it to be — a player, an enemy, a moving platform, a floor tile, a trigger zone that starts a cutscene. It's a plain piece of your own code that *usually* owns a sprite (so it has something to draw) but also carries everything else that has nothing to do with rendering: position, health, current state, AI behavior, timers, whatever the design calls for.
+
+There's no single correct shape for this. Some games bundle a character's sound effects directly onto the player object — `player.sounds.jump.play()`. Others keep audio completely separate, firing events that a dedicated sound manager listens for. Both are valid; the engine has no stake in the decision because `Sprite` and `Texture` only care about pixels, not gameplay.
+
+We're about to build our first real game object: a floor block. Its sprite is simple — one tile, one frame — but the object wrapping it will carry `type`, `solid`, and its own `x`/`y`/`width`/`height`, which is exactly the kind of gameplay data a `Sprite` was never meant to hold.
+
+<!-- Your notes on object composition patterns, ECS, etc. if you want to mention alternatives -->
+
+---
+
+## Step 16: Defining a Floor Block
+
+<!-- Your intro — building the FloorBlock class -->
+
+The tileset described in [README.md](README.md) uses 16×16 tiles. For now we only need one: `ground_a_tc`, frame index `58`, the flat middle-surface tile. Add these constants above `main()`:
+
+```js
+const TILE_SIZE   = 16;
+const FLOOR_FRAME = 58; // ground_a_tc — the only tile we use for now
+```
+
+Then define the `FloorBlock` class itself, also above `main()`. It owns a `Sprite` for drawing, but its other properties — `type`, `solid`, and the position/size pair — exist purely for gameplay code to read later, independent of how the sprite renders:
+
+```js
+class FloorBlock {
+    constructor(texture, { type, x, y, solid = true }) {
+        this.type   = type;
+        this.x      = x;
+        this.y      = y;
+        this.width  = TILE_SIZE;
+        this.height = TILE_SIZE;
+        this.solid  = solid;
+
+        this.texture = texture;
+        this.sprite  = new Sprite(texture, {
+            x, y,
+            width:  TILE_SIZE,
+            height: TILE_SIZE,
+            frameIndex: FLOOR_FRAME,
+        });
+    }
+
+    draw(backbuffer) {
+        backbuffer.draw(this.sprite);
+    }
+}
+```
+
+<!-- Explain why texture is shared but sprite is per-instance, and why x/y/width/height live on the block itself rather than only on the sprite -->
+
+The `Texture` is loaded once and shared by every block — it's just pixel data sitting on the GPU. The `Sprite` is cheap to create and is what actually gets drawn, so each block gets its own. Mirroring `x`/`y`/`width`/`height` directly onto the block (rather than only reading them off `block.sprite`) keeps collision and gameplay code from needing to know anything about how a block is drawn — useful later if a block's visual size and its collision size ever need to differ.
+
+---
+
+## Step 17: Placing Floor Tiles
+
+<!-- Your intro — loading the tileset and laying out a test row -->
+
+Load the tileset image the same way we loaded the character sheet. The tileset is a multi-row sheet of 16×16 tiles that has `cols: 9, rows: 10` in the image.
+
+```js
+const tilesetImg     = await loadImage('sprites/tileset.png');
+const tilesetTexture = await Texture.create(engine.device, tilesetImg, { cols: 9, rows: 10 });
+```
+
+Build a short row of blocks sitting at the same height as the placeholder ground line, so you can see them line up:
+
+```js
+const floorBlocks = [];
+for (let i = 0; i < 6; i++) {
+    floorBlocks.push(new FloorBlock(tilesetTexture, {
+        type: 'ground_a',
+        x: 72 + i * TILE_SIZE,
+        y: GROUND_Y,
+    }));
+}
+```
+
+Draw them each frame, right alongside the ground-line points:
+
+```js
+for (const block of floorBlocks) block.draw(engine.backbuffer);
+```
+
+<!-- Explain that the tiles are purely visual right now and still rely on GROUND_Y for collision, with real collision against blocks coming next -->
+
+The point-line ground is still doing all the collision work — these tiles are purely decorative for now. You should see six floor tiles sitting exactly on top of that line. The next step replaces the flat `GROUND_Y` check with real collision against this array of blocks.
+
+<!-- Your closing thoughts / lead-in to the next step -->
+
+---
+
+## Step 18: Two Ways to Check Collision
+
+<!-- Your intro — mostly conceptual, comparing the two approaches before we build either -->
+
+Physics happens on game objects, not sprites — the same distinction from Step 15, just applied to collision specifically. A `Sprite` doesn't know what shape it is for physics purposes; our `player` and `FloorBlock` objects already carry `x`/`y`/`width`/`height` precisely so something else — our physics code — can reason about where things are in the world, independent of how they're drawn.
+
+There are two common ways to ask "is this thing touching something solid?"
+
+**Rectangle (AABB) overlap**
+
+Treat both objects as axis-aligned boxes and check whether they overlap at all:
+
+```js
+function rectsOverlap(a, b) {
+    return a.x < b.x + b.width  &&
+           a.x + a.width  > b.x &&
+           a.y < b.y + b.height &&
+           a.y + a.height > b.y;
+}
+```
+
+One check tells you *that* two boxes are touching, but not *how* — not which side the contact happened on, or how far to push one box back out so they stop overlapping. Recovering that from the overlap alone means comparing how deep the penetration is on each axis and guessing which one mattered, which gets unreliable fast, especially at high speed.
+
+**Ray / point probing**
+
+Instead of comparing two whole rectangles, pick one specific point on your object and ask "is there anything solid exactly here?" Because you chose the point and the direction, you already know what a hit means — a point checked just below the player's feet can only ever mean "the floor is here."
+
+A single ray straight down from the player's center is the simplest version, but it has an obvious blind spot: once the player is more than half off the edge of a platform, the center point is no longer over solid ground at all, and the character falls as if the platform wasn't there — even though most of the sprite is still standing on it.
+
+```
+   player sprite, mostly still on the ledge:
+   ┌─────────┐
+   │ ▓▓▓▓▓▓▓ │
+   └────┬────┘
+   ▓▓▓▓▓│        ← center ray finds nothing here — false fall
+```
+
+Casting two rays instead — one near each edge — fixes that. As long as either edge is still above solid ground, the character is supported. And because each ray independently reports a hit, you immediately know which side it came from, which a rectangle overlap never tells you for free.
+
+<!-- Your thoughts on when you'd reach for rectangles vs rays — e.g. rectangles for hitboxes/triggers, rays for ground/wall checks -->
+
+We'll use rectangle overlap later for things like attack hitboxes, but for ground collision specifically, we're going to build the two-ray approach.
+
+---
+
+## Step 19: Foot Rays
+
+<!-- Your intro — building the two helper functions the floor collision will use -->
+
+Add these two functions inside `main()`, right after `floorBlocks` is created — they read that array, so they need to be in scope where it exists.
+
+`isSolidAt` is the point version of the rectangle check from Step 18 — instead of comparing two rectangles, it checks whether a single point falls inside any solid block:
+
+```js
+function isSolidAt(x, y) {
+    for (const block of floorBlocks) {
+        if (block.solid &&
+            x >= block.x && x < block.x + block.width &&
+            y >= block.y && y < block.y + block.height) {
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+`checkFoot` is the actual ray. Given an x position and the player's current feet row, it returns one of three answers: the player has sunk into the floor and needs to be pushed up, the player is already resting exactly on a solid surface, or there's nothing below at all:
+
+```js
+function checkFoot(x, feetY) {
+    if (isSolidAt(x, feetY)) {
+        // Already inside the floor — climb back out one pixel at a time
+        let y = feetY;
+        while (isSolidAt(x, y)) y--;
+        return y;
+    }
+    if (isSolidAt(x, feetY + 1)) {
+        return feetY; // resting exactly on the surface, no adjustment needed
+    }
+    return null; // nothing below — falling
+}
+```
+
+<!-- Explain the three return paths, and why the climb-out loop matters for fast falls -->
+
+The climb-out loop matters whenever the player moves down more than one pixel in a single frame — fast enough, and they'd land a few pixels inside the floor instead of exactly on top of it. Stepping the ray upward one pixel at a time until it's clear finds exactly how far to push them back out.
+
+---
+
+## Step 20: Replacing the Flat Ground with Real Collision
+
+<!-- Your intro — wiring the foot rays into the player's vertical movement -->
+
+Remove the placeholder ground-line drawing — it implies the floor spans the entire screen, which hasn't been true since `floorBlocks` became only 6 tiles wide:
+
+```js
+// Remove this block
+for (let x = 0; x < 240; x++) {
+    engine.backbuffer.drawPoint(x, GROUND_Y, 80, 160, 80);
+}
+```
+
+Then replace the flat `GROUND_Y` clamp with two rays, one near each edge of the player. If either ray reports the floor, the player is grounded; if either ray reports penetration, push the player up by whichever ray needs the larger correction:
+
+```js
+// Vertical movement
+player.y += vy * dt;
+
+// Ground collision via two foot rays near the player's left/right edges
+const feetY     = Math.floor(player.y + player.height);
+const leftFoot  = checkFoot(player.x + 5, feetY);
+const rightFoot = checkFoot(player.x + player.width - 6, feetY);
+
+if (leftFoot !== null || rightFoot !== null) {
+    const resolvedFeetY = Math.min(leftFoot ?? feetY, rightFoot ?? feetY);
+    player.y  = resolvedFeetY - player.height;
+    vy        = 0;
+    onGround  = true;
+    jumpTimer = 0;
+} else {
+    onGround = false;
+}
+```
+
+<!-- Explain the Math.min combination and what the reader should see now: falling off the edges of the 6-tile row -->
+
+`leftFoot ?? feetY` swaps a `null` (nothing below) for the unmodified `feetY`, so a falling ray can never win the `Math.min` comparison and force an incorrect snap — only an actual penetration (a smaller value) or an exact rest (the same value) can. `GROUND_Y` is still used to position the floor tiles and the player's starting spot, but it's no longer read every frame — the blocks themselves are now the only source of truth for where solid ground is. Walk left or right off the row of tiles and the character now falls right off the edge.
+
+<!-- Your closing thoughts / lead-in to the next step -->
+
+---
+
+## Step 21: A Raised Step — and a Gap in Our Collision
+
+<!-- Your intro — adding one more block to poke at what our collision can't do yet -->
+
+Add two extra blocks right after the loop that builds the main row — starting one tile past the end, and one tile higher. Two tiles wide rather than one matters here: the player sprite is 34 pixels wide and the two foot rays from Step 19 sit about 23 pixels apart, so a single 16-pixel-wide tile is narrower than the gap between the rays. Walking across a step that narrow, there's a moment where one ray has already cleared its far edge while the other ray — still over the main floor below — is now checking at the wrong (already-elevated) height and finds nothing either, and the character falls right through what looks like solid ground. A two-tile-wide step (32px) is comfortably wider than the ray spacing, so that gap never opens up:
+
+```js
+// A two-tile raised step at the end of the row
+for (let i = 0; i < 2; i++) {
+    floorBlocks.push(new FloorBlock(tilesetTexture, {
+        type: 'ground_a',
+        x: 72 + (6 + i) * TILE_SIZE,
+        y: GROUND_Y - TILE_SIZE,
+    }));
+}
+```
+
+<!-- Invite the reader to try a few things and observe what happens -->
+
+Try a few things with this in place:
+
+1. Run to the end of the row and jump up onto the raised tile. It should work exactly like landing on any other tile — our foot rays don't care how tall a step is, only whether there's something solid below.
+2. Stand on top of it, then walk off either edge. You'll drop straight back down to the main floor's height (or off the end of the world, if you walk off the far side).
+3. Now, without jumping, just run straight at it from the main floor. Watch closely as the character reaches the edge.
+
+<!-- Describe what the reader should actually see in step 3 — the character clips up into the bottom of the raised tile for a moment, then falls, because nothing is stopping horizontal movement -->
+
+That third case looks wrong, and it's worth sitting with *why*. Our collision so far only ever asks one question: "is there something solid below my feet?" It never asks "is there something solid immediately to my left or right?" So nothing stops the character from moving sideways into the raised block at all — for an instant you'll see the sprite overlap the bottom corner of the tile before gravity catches up and pulls the character down past it, since there was never any floor at that height to begin with once they cross under the step.
+
+<!-- Lead into the next step — side/wall collision is coming next -->
+
+This is the same kind of gap a single center ray had back in Step 18, just on the other axis: our current setup has no concept of a wall. The next bit of collision work adds exactly that — a check for solid ground immediately beside the player, so walking directly into the side of a block stops the character instead of letting them slide through it.
