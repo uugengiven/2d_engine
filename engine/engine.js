@@ -70,6 +70,10 @@ export class Engine {
     width;
     /** @type {number} */
     height;
+    /** @type {'square' | 'stretch'} */
+    scaleMode;
+    /** @type {boolean} */
+    integerScale;
 
     // Reusable per-frame pools — grown as needed, never shrunk
     /** @type {Array<{ texture: GPUTexture, view: GPUTextureView, compositeBindGroup: GPUBindGroup | null }>} */
@@ -91,7 +95,15 @@ export class Engine {
      * @param {HTMLCanvasElement} canvas
      * @param {number} width   Logical pixel width
      * @param {number} height  Logical pixel height
-     * @param {{ Scaler?: new(device: GPUDevice, format: GPUTextureFormat) => any }} options
+     * @param {{
+     *   Scaler?: new(device: GPUDevice, format: GPUTextureFormat) => any,
+     *   scaleMode?: 'square' | 'stretch',
+     *   integerScale?: boolean,
+     * }} options
+     *   scaleMode    'square'  — letterbox/pillarbox to preserve pixel aspect ratio (default)
+     *                'stretch' — stretch to fill the entire canvas
+     *   integerScale  true     — snap scale to the nearest integer (only when scaleMode='square'
+     *                            and the computed scale is >= 1; sub-1 scales are always fractional)
      * @returns {Promise<Engine>}
      */
     static async init(canvas, width, height, options = {}) {
@@ -108,6 +120,17 @@ export class Engine {
         canvas.width  = canvas.clientWidth  || width;
         canvas.height = canvas.clientHeight || height;
 
+        // Watch for CSS size changes and record the new dimensions, but do NOT apply
+        // them here. Assigning canvas.width/height forces a WebGPU swap-chain rebuild;
+        // doing that on every observer tick during a drag thrashes the GPU and can
+        // trigger a device loss that survives hard-refresh within the same browser tab.
+        // buffer_flip() applies the pending size once per frame instead.
+        new ResizeObserver(entries => {
+            const { inlineSize: w, blockSize: h } = entries[0].contentBoxSize[0];
+            engine._pendingCanvasWidth  = Math.round(w) || width;
+            engine._pendingCanvasHeight = Math.round(h) || height;
+        }).observe(canvas);
+
         context.configure({ device, format, alphaMode: 'opaque' });
 
         const engine = new Engine();
@@ -116,6 +139,8 @@ export class Engine {
         engine.format = format;
         engine.width = width;
         engine.height = height;
+        engine.scaleMode = options.scaleMode ?? 'square';
+        engine.integerScale = options.integerScale ?? false;
         engine.backbuffer = new BackBuffer();
 
         // Internal composite target — layers blit into this before scaling
@@ -526,10 +551,45 @@ export class Engine {
         this.device.queue.writeBuffer(buffer, LIGHTS_ARRAY_OFFSET, data);
     }
 
+    // Returns the viewport rect { x, y, width, height } for the back-buffer → canvas blit,
+    // or null when the internal resolution already fills the canvas (stretch mode).
+    _computeScaleViewport() {
+        const canvas = this.context.canvas;
+        const dstW = canvas.width;
+        const dstH = canvas.height;
+
+        if (this.scaleMode === 'stretch') return null;
+
+        let scale = Math.min(dstW / this.width, dstH / this.height);
+
+        // Only snap to integers when scale >= 1; allow fractional below that so a
+        // smaller-than-internal canvas doesn't collapse to a 0-pixel viewport.
+        if (this.integerScale && scale >= 1) {
+            scale = Math.floor(scale);
+        }
+
+        const vpW = Math.round(this.width  * scale);
+        const vpH = Math.round(this.height * scale);
+        const vpX = Math.round((dstW - vpW) / 2);
+        const vpY = Math.round((dstH - vpH) / 2);
+
+        return { x: vpX, y: vpY, width: vpW, height: vpH };
+    }
+
     /**
      * Flushes all queued commands to the GPU and presents the frame.
      */
     buffer_flip() {
+        // Apply any pending canvas resize before touching the swap chain.
+        // The ResizeObserver records the latest size; we apply it here so the
+        // swap-chain rebuild happens at most once per rendered frame.
+        if (this._pendingCanvasWidth !== undefined) {
+            const canvas = this.context.canvas;
+            canvas.width  = this._pendingCanvasWidth;
+            canvas.height = this._pendingCanvasHeight;
+            this._pendingCanvasWidth = this._pendingCanvasHeight = undefined;
+        }
+
         const { device } = this;
         const commands = this.backbuffer.commands;
 
@@ -696,6 +756,19 @@ export class Engine {
 
         // Composite all layer textures onto the internal texture in order.
         // First layer clears the internal texture; subsequent layers alpha-blend on top.
+        // If there are no layers at all, we still need to clear the internal texture.
+        if (layers.length === 0) {
+            const pass = encoder.beginRenderPass({
+                colorAttachments: [{
+                    view: this.internalTextureView,
+                    clearValue: clearColor,
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                }],
+            });
+            pass.end();
+        }
+
         for (let li = 0; li < layers.length; li++) {
             const layerTex = this.#getLayerTexture(li);
 
@@ -716,7 +789,7 @@ export class Engine {
 
         // Scale the composited internal texture to the canvas
         const canvasView = this.context.getCurrentTexture().createView();
-        this.scaler.scale(encoder, this.internalTextureView, canvasView);
+        this.scaler.scale(encoder, this.internalTextureView, canvasView, this._computeScaleViewport());
 
         device.queue.submit([encoder.finish()]);
         this.backbuffer.commands = [];

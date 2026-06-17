@@ -1,0 +1,1 @@
+This will be a vampire survivor type game that will serve as a base tutorial for creating a game.

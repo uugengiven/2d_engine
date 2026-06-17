@@ -2,6 +2,8 @@
 
 A lightweight 2D sprite engine built on WebGPU with per-layer lighting, normal maps, palette swapping, and a channel-based audio system.
 
+This project was built to allow developers new to games and possibly new(er) to coding the ability to work on 2D games in the browser without forcing developers to use a specific paradigm in their game engine. The goal is to give a tool that will allow for fast and easy drawing to the screen, along with an easy way to plug into audio and controls, without defining any design elements. Including whether to even have a game loop.
+
 ---
 
 ## Table of Contents
@@ -32,7 +34,24 @@ function loop() {
 requestAnimationFrame(loop);
 ```
 
-`Engine.init(canvas, width, height)` takes a logical resolution — the internal render target is always `width × height` pixels, upscaled to fit the canvas element via the nearest-neighbor scaler. The canvas CSS size drives the output resolution, not the logical size.
+`Engine.init(canvas, width, height, options?)` takes a logical resolution — the internal render target is always `width × height` pixels, upscaled to fit the canvas element via the nearest-neighbor scaler. The canvas CSS size drives the output resolution, not the logical size. The canvas automatically responds to resize without any extra work from your game code.
+
+Two scaling options control how the internal buffer maps to the canvas:
+
+```js
+const engine = await Engine.init(canvas, 320, 180, {
+    scaleMode:    'square',  // 'square' (default) — letterbox/pillarbox to preserve pixel aspect ratio
+                             // 'stretch'           — stretch to fill the entire canvas
+    integerScale: true,      // snap to the nearest integer scale (2×, 3×, …); only applies when
+                             // scaleMode is 'square' and the canvas is larger than the internal res
+});
+```
+
+`integerScale` keeps every logical pixel a perfect same-size square on screen, at the cost of some unused border space. If the canvas is smaller than the internal resolution, fractional scaling is always used regardless of this setting.
+
+This allows the game to run at a specific internal resolution no matter what size the output is. This means you can copy specific resolutions like the SNES 256x224 or DOS ModeX 320x240 for the 16 bit feeling, or a much lower resolution to copy the C64/Atari feel, or work at a higher resolution like 1920x1080 and allow the engine to handle output scaling.
+
+Most of the design decisions that are forced here, such as doing buffer flips, are based on ModeX, an old graphical mode on early 90s PCs. Because it was the 90s, graphics calls were done with integers rather than floats. That means this engine has the top left pixel as 0,0 and bottom right pixel as 319,239 (or whatever your width x height are), rather than using floats to go from 0, 0 to 1.0, 1.0.
 
 ---
 

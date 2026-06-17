@@ -1,6 +1,7 @@
 // Scaler interface:
 //   constructor(device: GPUDevice, destFormat: GPUTextureFormat)
-//   scale(encoder: GPUCommandEncoder, sourceView: GPUTextureView, destView: GPUTextureView): void
+//   scale(encoder, sourceView, destView, viewport?): void
+//     viewport: { x, y, width, height } in pixels — null/omitted means fullscreen stretch
 
 const SCALE_VERTEX = /* wgsl */`
 struct VertexOutput {
@@ -97,12 +98,14 @@ export class NearestNeighborScaler {
 
     /**
      * Records a scale blit from sourceView into destView.
-     * Both views must already be valid for this frame.
      * @param {GPUCommandEncoder} encoder
      * @param {GPUTextureView} sourceView
      * @param {GPUTextureView} destView
+     * @param {{ x: number, y: number, width: number, height: number } | null} [viewport]
+     *   Destination sub-rect in pixels. null/omitted = fullscreen stretch.
+     *   The area outside the viewport is cleared to black (letterbox bars).
      */
-    scale(encoder, sourceView, destView) {
+    scale(encoder, sourceView, destView, viewport = null) {
         const bindGroup = this.#device.createBindGroup({
             layout: this.#bindGroupLayout,
             entries: [
@@ -122,6 +125,9 @@ export class NearestNeighborScaler {
 
         pass.setPipeline(this.#pipeline);
         pass.setBindGroup(0, bindGroup);
+        if (viewport) {
+            pass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+        }
         pass.draw(6);
         pass.end();
     }
