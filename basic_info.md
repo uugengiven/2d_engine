@@ -270,6 +270,10 @@ engine.buffer_flip();
 
 There's no `Text` class in the engine. Drawing "Hello World" is just eleven ordinary `Sprite`s built from one font `Texture` and a one-line index formula — the same primitives as Step 4, doing a different job. See `examples/font-text.html`.
 
+What is important is this isn't the only way to create text and display it. The engine draws sprites on the screen. How you decide to create that list of sprites to draw is up to you. You could create a text object that includes an internal array of sprites. When that array is requested, the text object's x/y screen coordinates are added to all of the individual sprite's internal coordinates that are based on starting at 0,0, so within the game you are creating, you place the text and the object takes care of placing all of its child sprites based on its x/y coordinates.
+
+One important caveat is to try to avoid creating new sprites every frame if those sprites can be created once and reused. For something like enemies or projectiles, sprites are expected to be created here and there within frames. But for something like level tiles or score text, initial sprite creation when these objects are needed and then keeping those sprites alive until that object isn't needed anymore is going to be much faster in JavaScript.
+
 ---
 
 ## Step 7: Game Loops and Frame Timing
@@ -347,11 +351,11 @@ function loop(timestamp) {
     accumulator += dt;
 
     while (accumulator >= STEP) {
-        updateOneFrameWorth(); // plain pixels/frame logic, always exactly one "frame"
+        updateOneFrameWorth(); // do the "physics" of the game, update where sprites are, do one "frame" of the game
         accumulator -= STEP;
     }
 
-    draw(); // render every actual display frame, however often that is
+    draw(); // render every actual display frame, however often that is - this doesn't update sprite locations, only draws
     requestAnimationFrame(loop);
 }
 ```
