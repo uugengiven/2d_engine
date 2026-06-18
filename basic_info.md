@@ -3,7 +3,14 @@
 <!-- Your intro — the ModeX/SNES heritage, and the idea that this whole doc is about
      the *why* behind the engine's shape, not just the steps to build a game. -->
 
-This engine asks you to think in two dimensions — flat pixels, integer positions, sprites stamped on top of each other — even though the hardware underneath is a 3D GPU that only knows about triangles, shaders, and floating point. Most of what the engine code does is translate your 2D mental model into that 3D pipeline without making you look at it. Where that translation leaks through in a way that's worth understanding, this doc calls it out.
+This engine allows you to treat your graphical space as a piece of graph paper in two dimensions. This allows for an older style of working in graphics and games that are similar to how old arcade, PC, and console games were made in the 8/16 bit eras. The basic concepts of the engine do their best to be as unobtrisive and non-opinionated as possible, other than the following decisions:
+
+* Pixel art is the focus
+* Minimal setup required
+* Individual parts can be used separately
+* It should feel like making games in the 90s, but better
+
+Underneath, there is a 3D engine that takes care of things like polygons, shaders, and floating point math. For the most part, you will not have to think about any of the 3D work happening in the engine. Where that translation leaks through in a way that's worth understanding, this doc calls it out.
 
 ---
 
