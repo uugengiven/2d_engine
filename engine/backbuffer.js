@@ -2,20 +2,28 @@ export class BackBuffer {
     /** @type {Array<object>} */
     commands = [];
 
+    _lastR = 0;
+    _lastG = 0;
+    _lastB = 0;
+
     /**
      * Clears the command list and records the background color for this frame.
      * No GPU work happens here.
-     * @param {number} r  Red   0–255 (default 0)
-     * @param {number} g  Green 0–255 (default 0)
-     * @param {number} b  Blue  0–255 (default 0)
+     * @param {number} [r]  Red   0–255 (default: last color used, or 0)
+     * @param {number} [g]  Green 0–255 (default: last color used, or 0)
+     * @param {number} [b]  Blue  0–255 (default: last color used, or 0)
      */
-    clear(r = 0, g = 0, b = 0) {
+    clear(r, g, b) {
+        if (r !== undefined) this._lastR = r;
+        if (g !== undefined) this._lastG = g;
+        if (b !== undefined) this._lastB = b;
+
         this.commands = [];
         this.commands.push({
             type: 'clear',
-            r: r / 255,
-            g: g / 255,
-            b: b / 255,
+            r: this._lastR / 255,
+            g: this._lastG / 255,
+            b: this._lastB / 255,
             a: 1.0,
         });
     }
