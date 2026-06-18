@@ -351,7 +351,7 @@ function loop(timestamp) {
     accumulator += dt;
 
     while (accumulator >= STEP) {
-        updateOneFrameWorth(); // do the "physics" of the game, update where sprites are, do one "frame" of the game
+        updateOneFrameWorth(); // update where sprites are, do one "frame" of the game
         accumulator -= STEP;
     }
 
