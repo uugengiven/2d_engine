@@ -452,6 +452,34 @@ This works even with no `Light` defined anywhere — the implicit unlit layer st
 
 ---
 
+## Step 9: Drawing Points
+
+Everything so far has been a `Sprite` — a rectangle with an image (also known as a textured quad, but only if you're in a frat). The other thing you can put on screen is `backbuffer.drawPoint`, which skips `Texture` entirely:
+
+```js
+engine.backbuffer.drawPoint(160, 90, 255, 80, 80); // one logical pixel, red, at (160, 90)
+engine.backbuffer.drawPoint(160, 91, 255, 80, 80, 128); // optional alpha — half-transparent
+```
+
+A point is a single logical pixel with a flat color, nothing else — no UV, no `width`/`height`, no `frameIndex`. Under the hood it runs through a completely separate pipeline from sprites (`pointPipeline`, `point-list` topology instead of `triangle-list`) with its own tiny vertex format: just a position and a color, no texture binding at all. You can duplicate this with a 1x1 white texture and draw sprites as pixels, but the point-list is theoretically faster for single pixels. <!-- Your notes — why a separate pipeline rather than e.g. a 1×1 white Texture and a Sprite -->
+
+### Points are cheap, and they batch hard
+
+Every `drawPoint` call in a layer ends up in one shared vertex buffer, and the engine issues a single `pass.draw(pointCount)` for the whole layer — one point or ten thousand points, one draw call. That's why `examples/points.html` can run three full particle fountains, each hundreds of independent dots, without breaking a sweat: there's no per-particle texture lookup or pipeline switch, just raw colored pixels.
+
+Points still go through the same lighting math a flat-normal sprite would — drop them into a `layer([...lights])` and they'll pick up ambient, point, and directional light exactly like an unlit-normal-map sprite does (see the third fountain in `examples/points.html`, lit by two swaying point lights).
+
+### What points are not for
+
+A point is one pixel — no thickness, no interpolation, no fill. There's no `drawLine` or `drawRect`; if you want a line, you plot the pixels along it yourself, the way `examples/points-collision.html` draws its sphere and box collider outlines (`drawSphereOutline`/`drawBoxOutline` — looping over `Math.cos`/`Math.sin` steps or the four edges of a box, calling `drawPoint` for each pixel). It works, but it's manual — there's no shape math built in, and you're computing every pixel position in JS on the CPU before any of it reaches the GPU.
+
+For anything that's actually a shape — a circle, a filled rectangle, an icon — a `Sprite` backed by a canvas-drawn `Texture` (Step 2) is almost always the better tool: you draw the shape once with the full Canvas 2D API, hand it to `Texture.create`, and from then on it's one cheap draw call per instance, scaled and rotated for free. Reach for points when you genuinely want individual pixels — particles, starfields, debug overlays, dotted guide lines, per-pixel fade effects — not as a general-purpose drawing primitive.
+
+<!-- Your notes — anything else you'd want to call out about when points earn their keep
+     over sprites, e.g. retro-specific effects like plasma/starfields/scanlines -->
+
+---
+
 <!-- Your closing section — the bigger picture: 2D sprites/quads under the hood are
      textured triangles, alpha blending, and a fragment shader; the engine's job is to
      keep that invisible so the mental model stays "stamps on a 2D grid." -->
