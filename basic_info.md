@@ -59,11 +59,11 @@ const engine = await Engine.init(canvas, 320, 240, {
 
 Three ways the logical buffer can land on the canvas:
 
-| What you asked for | `scaleMode` | `integerScale` | Result |
+| Mode Descriptions | `scaleMode` | `integerScale` | Result |
 |---|---|---|---|
-| Fill | `'stretch'` | — | Stretches to the full canvas, ignoring aspect ratio |
-| Square | `'square'` | `false` (default) | Preserves pixel aspect ratio, letterboxed, fractional scale allowed |
-| Integer | `'square'` | `true` | Same as square, but scale is always a whole number (2×, 3×…) — no uneven pixels |
+| Fill | `'stretch'` | — | Stretches to the full canvas, ignoring aspect ratio. This can end up with non-square pixels, but the canvas will be filled 100%. |
+| Square | `'square'` | `false` (default) | Preserves pixel aspect ratio, letterboxed, fractional scale allowed. Will always fill to either the top/bottom edges or left/right edges. |
+| Integer | `'square'` | `true` | Same as square, but scale is always a whole number (2×, 3×…) — no uneven pixels. Will pick the largest integer value that doesn't go beyond the bounds of the canvas. |
 
 <!-- Your notes on why integer scaling matters for pixel art specifically, and when
      you'd reach for stretch vs square -->
