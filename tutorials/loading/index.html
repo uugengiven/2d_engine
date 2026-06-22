@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading Screens &amp; Level Switching</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: monospace;
+            color: #ccc;
+        }
+        .stage {
+            position: relative;
+            width: 720px;
+            height: 540px;
+        }
+        canvas {
+            border: 2px solid #555;
+            width: 100%;
+            height: 100%;
+        }
+        .loading {
+            position: absolute;
+            inset: 2px;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.8);
+        }
+        .loading-label {
+            font-size: 14px;
+        }
+        .loading-bar {
+            width: 60%;
+            height: 12px;
+            background: #333;
+            border: 1px solid #555;
+        }
+        .loading-fill {
+            height: 100%;
+            width: 0%;
+            background: #6c9;
+        }
+        .hint {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="stage">
+        <canvas id="engine"></canvas>
+        <div class="loading" id="loading">
+            <div class="loading-label" id="loading-label">Loading…</div>
+            <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+        </div>
+    </div>
+    <p class="hint">SPACE — switch level &nbsp;&nbsp; F — play a note (Level 2 only, via SF2)</p>
+
+    <script type="module">
+        import { Engine }       from '../../engine/engine.js';
+        import { Texture }      from '../../engine/texture.js';
+        import { Sprite }       from '../../engine/sprite.js';
+        import { Input }        from '../../engine/input.js';
+        import { AudioManager } from '../../engine/audio.js';
+
+        // ── loading screen DOM hooks ─────────────────────────────────────────
+        const loadingEl = document.getElementById('loading');
+        const labelEl    = document.getElementById('loading-label');
+        const fillEl     = document.getElementById('loading-fill');
+        let labelPrefix  = '';
+
+        function showLoading(label) {
+            labelPrefix = label;
+            labelEl.textContent = label;
+            fillEl.style.width = '0%';
+            loadingEl.style.display = 'flex';
+        }
+
+        function hideLoading() {
+            loadingEl.style.display = 'none';
+        }
+
+        // {loaded, total} — total is null if a server didn't send Content-Length
+        function setProgress({ loaded, total }) {
+            if (total != null) {
+                const pct = Math.min(100, Math.round((loaded / total) * 100));
+                fillEl.style.width = pct + '%';
+                labelEl.textContent = `${labelPrefix} (${pct}%)`;
+            } else {
+                fillEl.style.width = '100%';
+                labelEl.textContent = `${labelPrefix} (${(loaded / 1024).toFixed(0)} KB)`;
+            }
+        }
+
+        // ── byte-progress image loading ──────────────────────────────────────
+        // Texture.create() takes an already-decoded image source — the engine has
+        // no opinion on how you fetch it. This streams the bytes ourselves so we
+        // can report progress, then hands the decoded result straight to
+        // createImageBitmap() instead of going through an <img> element at all.
+        async function loadImageWithProgress(url, onProgress) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Image load failed (${response.status}): ${url}`);
+
+            if (!onProgress || !response.body) {
+                return createImageBitmap(await response.blob());
+            }
+
+            const total = Number(response.headers.get('content-length')) || null;
+            const reader = response.body.getReader();
+            const chunks = [];
+            let loaded = 0;
+
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                loaded += value.byteLength;
+                onProgress({ loaded, total, url });
+            }
+
+            return createImageBitmap(new Blob(chunks));
+        }
+
+        // ── manifest loader ───────────────────────────────────────────────────
+        // One asset map -> one aggregated progress callback, no matter how many
+        // images/sounds/soundfonts it contains or how they're mixed. Used both
+        // for the initial boot load and for every later level switch.
+        async function loadManifest(device, audio, assetMap, onProgress) {
+            const entries = Object.entries(assetMap);
+            const state   = entries.map(() => ({ loaded: 0, total: null }));
+
+            const report = () => {
+                if (!onProgress) return;
+                const loaded = state.reduce((sum, s) => sum + s.loaded, 0);
+                const total  = state.every(s => s.total != null)
+                    ? state.reduce((sum, s) => sum + s.total, 0)
+                    : null;
+                onProgress({ loaded, total });
+            };
+
+            const results = {};
+            await Promise.all(entries.map(async ([key, desc], i) => {
+                const track = p => { state[i] = p; report(); };
+
+                if (desc.type === 'image') {
+                    const bitmap = await loadImageWithProgress(desc.url, track);
+                    results[key] = await Texture.create(device, bitmap, desc.options);
+                } else if (desc.type === 'sound') {
+                    results[key] = await audio.load(desc.url, { ...(desc.options ?? {}), onProgress: track });
+                } else if (desc.type === 'sf2') {
+                    results[key] = await audio.loadSF2(desc.url, { onProgress: track });
+                }
+            }));
+
+            return results;
+        }
+
+        // ── asset manifests ───────────────────────────────────────────────────
+        // Loaded once at boot, kept for the whole session — never disposed on a
+        // level switch.
+        const SHARED = {
+            jumpSfx: { type: 'sound', url: 'sounds/jump.wav' },
+        };
+
+        // Loaded/disposed per level. Each level's `assets` map feeds straight
+        // into loadManifest() — the level switch code below doesn't care what's
+        // inside it.
+        const LEVELS = {
+            1: {
+                label: 'Level 1',
+                spriteSize: { width: 16, height: 16 },
+                assets: {
+                    player: { type: 'image', url: 'sprites/red_ball.png' },
+                    bgm:    { type: 'sound', url: 'sounds/bgm-level1.mp3', options: { loop: true, channel: 'music' } },
+                },
+            },
+            2: {
+                label: 'Level 2',
+                spriteSize: { width: 107, height: 117 }, // native is 214x235 — displayed at half size
+                assets: {
+                    player:    { type: 'image', url: 'sprites/rogue.png' },
+                    bgm:       { type: 'sound', url: 'sounds/bgm-level2.mp3', options: { loop: true, channel: 'music' } },
+                    soundfont: { type: 'sf2',   url: 'sounds/generalmidi.sf2' },
+                },
+            },
+        };
+
+        async function main() {
+            const canvas = document.getElementById('engine');
+            const engine = await Engine.init(canvas, 240, 180);
+            const input  = new Input(canvas, 240, 180);
+            const audio  = new AudioManager();
+            audio.createChannel('music', { volume: 0.7 });
+
+            input.preventDefault('Space');
+            input.preventDefault('KeyF');
+
+            function makeSprite(texture, size) {
+                return new Sprite(texture, {
+                    x: (240 - size.width) / 2,
+                    y: (180 - size.height) / 2,
+                    width:  size.width,
+                    height: size.height,
+                });
+            }
+
+            // Turns a loadManifest() result for a given level into everything
+            // the render loop needs, including building the SF2 instrument
+            // (synchronous once the file's bytes are in memory — no separate
+            // progress step needed for that part) and starting its music.
+            function buildLevelState(num, loaded) {
+                const instrument = loaded.soundfont
+                    ? audio.buildSF2Instrument(loaded.soundfont, 0, { channel: 'music' })
+                    : null;
+                loaded.bgm.play();
+                return {
+                    num,
+                    texture: loaded.player,
+                    sprite:  makeSprite(loaded.player, LEVELS[num].spriteSize),
+                    bgm:     loaded.bgm,
+                    instrument,
+                };
+            }
+
+            // Boot: shared assets and level 1's assets load together as one
+            // manifest, under one progress bar — there's no reason to show two
+            // separate loading screens back to back before the game even starts.
+            showLoading('Loading…');
+            const boot = await loadManifest(engine.device, audio, { ...SHARED, ...LEVELS[1].assets }, setProgress);
+            const shared = { jumpSfx: boot.jumpSfx };
+            let current = buildLevelState(1, boot);
+            hideLoading();
+
+            let switching = false;
+
+            async function switchLevel() {
+                if (switching) return;
+                switching = true;
+                try {
+                    shared.jumpSfx.play(); // already loaded — plays instantly, no loading screen needed for this part
+                    const nextNum = current.num === 1 ? 2 : 1;
+
+                    showLoading(`Loading ${LEVELS[nextNum].label}…`);
+                    const loaded = await loadManifest(engine.device, audio, LEVELS[nextNum].assets, setProgress);
+                    const next = buildLevelState(nextNum, loaded);
+                    hideLoading();
+
+                    // Tear down exactly what belonged to the level we're leaving.
+                    // Shared assets (jumpSfx) are untouched.
+                    current.bgm.dispose();
+                    current.texture.dispose();
+                    current.instrument?.dispose();
+
+                    current = next;
+                } finally {
+                    switching = false;
+                }
+            }
+
+            let spaceWasHeld = false;
+            let fWasHeld     = false;
+
+            function loop() {
+                input.update();
+
+                const spaceHeld = input.key('Space');
+                if (spaceHeld && !spaceWasHeld) switchLevel();
+                spaceWasHeld = spaceHeld;
+
+                const fHeld = input.key('KeyF');
+                if (fHeld && !fWasHeld) {
+                    // Capture the instrument now, not `current.instrument` inside the
+                    // timeout — if the player switches levels before this fires, that
+                    // would release a note on whatever instrument is current *then*.
+                    const instrument = current.instrument;
+                    instrument?.noteOn(60, 0.8);
+                    setTimeout(() => instrument?.noteOff(60), 500);
+                }
+                fWasHeld = fHeld;
+
+                engine.backbuffer.clear(20, 20, 30);
+                engine.backbuffer.draw(current.sprite);
+                engine.buffer_flip();
+
+                requestAnimationFrame(loop);
+            }
+            requestAnimationFrame(loop);
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

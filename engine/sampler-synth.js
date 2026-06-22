@@ -1,10 +1,18 @@
+import { fetchWithProgress } from './net.js';
+
 export class SamplerSynth {
+    // Backstop only — see Texture's registry comment for why dispose() is still
+    // the real API and this must not be relied on for timing.
+    static #registry = new FinalizationRegistry(filterNode => filterNode.disconnect());
+
     /** @type {AudioContext} */      #ctx;
     /** @type {BiquadFilterNode} */  #filterNode;
     #def;
     #zones = [];   // { loNote, hiNote, loVel, hiVel, rootNote, buffer, loopStart, loopEnd, envelope }
     #voices = [];
     #seq = 0;
+    #disposed = false;
+    #disposeToken = {};
 
     /**
      * Use SamplerSynth.load() to construct — buffers must be pre-decoded.
@@ -40,6 +48,8 @@ export class SamplerSynth {
         this.#filterNode.frequency.value = fDef.frequency ?? 20000;
         this.#filterNode.Q.value         = fDef.Q         ?? 1;
         this.#filterNode.connect(channel.inputNode);
+
+        SamplerSynth.#registry.register(this, this.#filterNode, this.#disposeToken);
     }
 
     /**
@@ -50,19 +60,36 @@ export class SamplerSynth {
      * @param {AudioContext} ctx
      * @param {object} def      — parsed instrument JSON
      * @param {string} baseUrl  — URL the JSON was loaded from; sample paths are resolved relative to it
+     * @param {(p: {loaded:number, total:number|null}) => void} [onProgress]
+     *   Aggregated across every zone's sample file. total is null unless every
+     *   zone's server reported a Content-Length.
      * @returns {Promise<object[]>} decoded zone list
      */
-    static async decodeZones(ctx, def, baseUrl = '') {
+    static async decodeZones(ctx, def, baseUrl = '', onProgress) {
         // Resolve baseUrl to absolute so that new URL(sample, base) works even when
         // both are relative paths (new URL requires an absolute base).
         const absBase = baseUrl ? new URL(baseUrl, location.href).href : location.href;
+        const zoneDefs = def.zones ?? [];
+
+        // Per-zone progress snapshots, re-summed into one onProgress call per update
+        // so the caller doesn't have to aggregate parallel downloads itself.
+        const perZone = onProgress ? zoneDefs.map(() => ({ loaded: 0, total: null })) : null;
+        const reportAggregate = () => {
+            const loaded = perZone.reduce((sum, p) => sum + p.loaded, 0);
+            const total  = perZone.every(p => p.total != null)
+                ? perZone.reduce((sum, p) => sum + p.total, 0)
+                : null;
+            onProgress({ loaded, total });
+        };
+
         return Promise.all(
-            (def.zones ?? []).map(async z => {
-                const url      = new URL(z.sample.replace(/#/g, '%23'), absBase).href;
-                const response = await fetch(url);
-                if (!response.ok) throw new Error(`Sample not found (${response.status}): ${url}`);
-                const ab       = await response.arrayBuffer();
-                const buffer   = await ctx.decodeAudioData(ab);
+            zoneDefs.map(async (z, i) => {
+                const url = new URL(z.sample.replace(/#/g, '%23'), absBase).href;
+                const ab  = await fetchWithProgress(url, onProgress && (p => {
+                    perZone[i] = p;
+                    reportAggregate();
+                }));
+                const buffer = await ctx.decodeAudioData(ab);
                 return {
                     loNote:    z.loNote    ?? 0,
                     hiNote:    z.hiNote    ?? 127,
@@ -86,11 +113,11 @@ export class SamplerSynth {
      * @param {object} channel
      * @param {object} def           — parsed instrument JSON
      * @param {string} baseUrl       — URL the JSON was loaded from; sample paths are resolved relative to it
-     * @param {{ voices?: number }} [options]
+     * @param {{ voices?: number, onProgress?: (p: {loaded:number, total:number|null}) => void }} [options]
      * @returns {Promise<SamplerSynth>}
      */
     static async load(ctx, channel, def, baseUrl = '', options = {}) {
-        const zones = await SamplerSynth.decodeZones(ctx, def, baseUrl);
+        const zones = await SamplerSynth.decodeZones(ctx, def, baseUrl, options.onProgress);
         return new SamplerSynth(ctx, channel, def, zones, options);
     }
 
@@ -102,6 +129,8 @@ export class SamplerSynth {
     get voiceStates() {
         return this.#voices.map(v => ({ state: v.state, note: v.note, startTime: v.noteStartTime }));
     }
+
+    get disposed() { return this.#disposed; }
 
     /**
      * @param {number} midiNote  0–127
@@ -187,8 +216,11 @@ export class SamplerSynth {
     }
 
     dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
         this.allNotesOff();
         this.#filterNode.disconnect();
+        SamplerSynth.#registry.unregister(this.#disposeToken);
     }
 
     /** @param {{ type?: string, frequency?: number, Q?: number }} params */

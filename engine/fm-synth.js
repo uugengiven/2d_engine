@@ -1,10 +1,19 @@
 export class FmSynth {
+    // Backstop only — see Texture's registry comment for why dispose() is still
+    // the real API and this must not be relied on for timing.
+    static #registry = new FinalizationRegistry(({ workletNode, filterNode }) => {
+        workletNode.disconnect();
+        filterNode.disconnect();
+    });
+
     /** @type {AudioContext} */      #ctx;
     /** @type {AudioWorkletNode} */  #workletNode;
     /** @type {BiquadFilterNode} */  #filterNode;
     #def;
     #voices = [];
     #seq = 0;
+    #disposed = false;
+    #disposeToken = {};
 
     /**
      * @param {AudioContext} ctx
@@ -57,12 +66,15 @@ export class FmSynth {
                 }
             }
         };
+
+        FmSynth.#registry.register(this, { workletNode: this.#workletNode, filterNode: this.#filterNode }, this.#disposeToken);
     }
 
     // ── public API ────────────────────────────────────────────────────────────
 
     get name()       { return this.#def.name ?? 'Unnamed'; }
     get voiceCount() { return this.#voices.length; }
+    get disposed()   { return this.#disposed; }
 
     get voiceStates() {
         return this.#voices.map(v => ({ state: v.state, note: v.note, startTime: v.noteStartTime }));
@@ -114,10 +126,13 @@ export class FmSynth {
     }
 
     dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
         this.allNotesOff();
         this.#post({ type: 'dispose' });
         this.#workletNode.disconnect();
         this.#filterNode.disconnect();
+        FmSynth.#registry.unregister(this.#disposeToken);
     }
 
     allNotesOff() {

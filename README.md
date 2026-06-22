@@ -98,6 +98,18 @@ sprite.paletteSrc = palSrc;
 sprite.paletteDst = palDst;
 ```
 
+### Disposing
+
+```js
+texture.dispose();           // frees the GPU memory (and normal map, if any)
+texture.disposed;             // true once dispose() has run
+
+const pal = Texture.createPalette(engine.device, colors);
+pal.dispose();
+```
+
+`dispose()` is idempotent — call it once you're done with a texture, e.g. when unloading a level. Any sprite still drawing with a disposed texture is a use-after-free, same as freeing any other resource still in use elsewhere — drop or replace those sprites first. Garbage collection eventually frees the underlying GPU handles on its own as a backstop if you forget, but that's not on any guaranteed schedule, so don't rely on it for getting VRAM back when you actually need it.
+
 Palette swapping happens entirely on the GPU. Assign `paletteSrc` and `paletteDst` to any sprite to activate it; clear both to `null` to revert.
 
 ---
@@ -284,6 +296,16 @@ const coin = await audio.load('coin.wav',   { channel: 'sfx' });
 
 Decode happens at load time so `play()` is always immediate.
 
+`load()`, `loadInstrument()`, and `loadSF2()` all take an `onProgress` callback for building loading screens:
+
+```js
+const bgm = await audio.load('theme.mp3', {
+    onProgress: ({ loaded, total }) => updateBar(loaded, total),
+});
+```
+
+`total` comes from the response's `Content-Length` header and is `null` if the server doesn't send one. For `loadInstrument()` with a sampler-type instrument, progress is aggregated across all of that instrument's sample files.
+
 ### Playing Sounds
 
 ```js
@@ -341,6 +363,17 @@ sfx.off('end', handler);
 ```
 
 `'loop'` fires within ~15ms of each loop point. It's accurate enough for UI reactions but not for beat-locked sequencing.
+
+### Disposing
+
+```js
+bgm.dispose();              // stops playback, disconnects, drops the decoded buffer
+inst.dispose();             // OscSynth / FmSynth / SamplerSynth — same idea
+audio.removeChannel('music'); // disposes a named channel and forgets it
+await audio.dispose();      // full teardown: every channel + closes the AudioContext
+```
+
+`dispose()` is idempotent everywhere it appears. Like textures, garbage collection cleans up forgotten instruments and channels as a backstop, but with a different risk profile: a *playing* `Sound` you've already dropped your reference to (fire-and-forget SFX) keeps playing fine on its own — the Web Audio API guarantees that. The thing actually worth disposing explicitly is long-lived stuff you're still holding a reference to: background music you're swapping out, and instruments/channels, whose worklet and filter nodes stay connected (and processing) until something disconnects them. `audio.dispose()` only disconnects the graph — it doesn't dispose individual `Sound`/instrument objects you're still holding, so dispose those first.
 
 ### Modifying a Channel After Creation
 

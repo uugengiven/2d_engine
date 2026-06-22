@@ -6,12 +6,21 @@ function midiToHz(note) {
 }
 
 export class OscSynth {
+    // Backstop only — see Texture's registry comment for why dispose() is still
+    // the real API and this must not be relied on for timing.
+    static #registry = new FinalizationRegistry(({ workletNode, filterNode }) => {
+        workletNode.disconnect();
+        filterNode.disconnect();
+    });
+
     /** @type {AudioContext} */      #ctx;
     /** @type {AudioWorkletNode} */  #workletNode;
     /** @type {BiquadFilterNode} */  #filterNode;
     #def;
     #voices = [];
     #seq = 0; // monotonic counter for oldest-steal ordering
+    #disposed = false;
+    #disposeToken = {};
 
     /**
      * @param {AudioContext} ctx
@@ -65,12 +74,15 @@ export class OscSynth {
                 }
             }
         };
+
+        OscSynth.#registry.register(this, { workletNode: this.#workletNode, filterNode: this.#filterNode }, this.#disposeToken);
     }
 
     // ── public API ────────────────────────────────────────────────────────────
 
     get name()        { return this.#def.name ?? 'Unnamed'; }
     get voiceCount()  { return this.#voices.length; }
+    get disposed()    { return this.#disposed; }
 
     /** Read-only snapshot of the voice pool — for debugging and tests. */
     get voiceStates() {
@@ -145,10 +157,13 @@ export class OscSynth {
      * switching instruments — stops worklet processing and frees the audio graph node.
      */
     dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
         this.allNotesOff();
         this.#post({ type: 'dispose' });
         this.#workletNode.disconnect();
         this.#filterNode.disconnect();
+        OscSynth.#registry.unregister(this.#disposeToken);
     }
 
     /** Release all currently playing voices. */

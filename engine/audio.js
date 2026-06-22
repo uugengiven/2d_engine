@@ -1,7 +1,8 @@
-import { OscSynth }     from './synth.js';
-import { FmSynth }      from './fm-synth.js';
-import { SamplerSynth } from './sampler-synth.js';
-import { SF2Parser }    from './sf2-parser.js';
+import { OscSynth }          from './synth.js';
+import { FmSynth }           from './fm-synth.js';
+import { SamplerSynth }      from './sampler-synth.js';
+import { SF2Parser }         from './sf2-parser.js';
+import { fetchWithProgress } from './net.js';
 
 function generateIR(context, duration = 2.0, decay = 2.0) {
     const length = Math.ceil(context.sampleRate * duration);
@@ -16,10 +17,20 @@ function generateIR(context, duration = 2.0, decay = 2.0) {
 }
 
 class Channel {
+    // Backstop only — see Texture's registry comment for why explicit dispose()
+    // is still the real API and this must not be relied on for timing.
+    static #registry = new FinalizationRegistry(nodes => {
+        for (const node of nodes) node?.disconnect();
+    });
+
     /** @type {GainNode} */ #volumeNode;
     /** @type {BiquadFilterNode|null} */ #filterNode = null;
     /** @type {GainNode|null} */ #dryGain = null;
     /** @type {GainNode|null} */ #wetGain = null;
+    /** @type {ConvolverNode|null} */ #convolver = null;
+    /** @type {GainNode|null} */ #reverbOut = null;
+    #disposed = false;
+    #disposeToken = {};
 
     /**
      * @param {AudioContext} context
@@ -50,20 +61,25 @@ class Channel {
             this.#dryGain.gain.value = 1 - wet;
             this.#wetGain.gain.value = wet;
 
-            const convolver = context.createConvolver();
-            convolver.buffer = generateIR(context, opts.duration ?? 2.0, opts.decay ?? 2.0);
+            this.#convolver = context.createConvolver();
+            this.#convolver.buffer = generateIR(context, opts.duration ?? 2.0, opts.decay ?? 2.0);
 
-            const reverbOut = context.createGain();
+            this.#reverbOut = context.createGain();
             last.connect(this.#dryGain);
-            last.connect(convolver);
-            convolver.connect(this.#wetGain);
-            this.#dryGain.connect(reverbOut);
-            this.#wetGain.connect(reverbOut);
-            reverbOut.connect(destination);
-            return;
+            last.connect(this.#convolver);
+            this.#convolver.connect(this.#wetGain);
+            this.#dryGain.connect(this.#reverbOut);
+            this.#wetGain.connect(this.#reverbOut);
+            this.#reverbOut.connect(destination);
+        } else {
+            last.connect(destination);
         }
 
-        last.connect(destination);
+        Channel.#registry.register(this, this.#allNodes(), this.#disposeToken);
+    }
+
+    #allNodes() {
+        return [this.#volumeNode, this.#filterNode, this.#dryGain, this.#wetGain, this.#convolver, this.#reverbOut];
     }
 
     /** @returns {AudioNode} */
@@ -71,6 +87,9 @@ class Channel {
 
     get volume() { return this.#volumeNode.gain.value; }
     set volume(v) { this.#volumeNode.gain.value = Math.max(0, v); }
+
+    /** @type {boolean} True once dispose() has run. Using a disposed Channel is undefined behavior. */
+    get disposed() { return this.#disposed; }
 
     /** @param {number} wet 0–1 */
     setReverbWet(wet) {
@@ -84,10 +103,33 @@ class Channel {
     setFilterCutoff(hz) {
         if (this.#filterNode) this.#filterNode.frequency.value = hz;
     }
+
+    /**
+     * Disconnects every node this channel created. Sounds still routed to this
+     * channel will keep playing into a dead end until they finish — stop them
+     * first if that matters. Idempotent. Prefer AudioManager.removeChannel(name)
+     * for named channels so the manager forgets about it too.
+     */
+    dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        for (const node of this.#allNodes()) node?.disconnect();
+        Channel.#registry.unregister(this.#disposeToken);
+    }
 }
 
 export class Sound {
-    /** @type {AudioBuffer} */ #buffer;
+    // Backstop only — see Texture's registry comment. Note this is lower-stakes
+    // than Texture/Channel: a playing AudioBufferSourceNode has automatic
+    // lifetime per the Web Audio spec, so dropping a Sound's reference mid-play
+    // (fire-and-forget SFX) already doesn't leak or cut off audio on its own.
+    // This just disconnects whatever the last-built chain happens to be.
+    static #registry = new FinalizationRegistry(state => {
+        try { state.source?.stop(); } catch {}
+        state.gainNode?.disconnect();
+    });
+
+    /** @type {AudioBuffer|null} */ #buffer;
     /** @type {Channel} */ #channel;
     /** @type {AudioContext} */ #context;
     /** @type {AudioBufferSourceNode|null} */ #source = null;
@@ -98,6 +140,11 @@ export class Sound {
     #loop;
     #loopTimeout = null;
     #listeners = { stop: [], end: [], loop: [] };
+    #disposed = false;
+    #disposeToken = {};
+    // Mutable — the registry holds this same object and reads its latest
+    // contents at GC time, rather than a snapshot from registration time.
+    #cleanupState = { source: null, gainNode: null };
 
     /** Default volume for this sound (0–1). Can be overridden per play() call. */
     volume = 1.0;
@@ -120,10 +167,13 @@ export class Sound {
         if (options.volume != null) this.volume = options.volume;
         if (options.pan != null) this.pan = options.pan;
         if (options.pitch != null) this.pitch = options.pitch;
+
+        Sound.#registry.register(this, this.#cleanupState, this.#disposeToken);
     }
 
     get playing() { return this.#playing; }
-    get duration() { return this.#buffer.duration; }
+    get disposed() { return this.#disposed; }
+    get duration() { return this.#buffer?.duration ?? 0; }
 
     get currentTime() {
         if (!this.#playing) return this.#pauseOffset;
@@ -135,6 +185,7 @@ export class Sound {
         this.#gainNode?.disconnect();
         this.#gainNode = this.#context.createGain();
         this.#gainNode.gain.value = options.volume ?? this.volume;
+        this.#cleanupState.gainNode = this.#gainNode;
 
         let last = this.#gainNode;
 
@@ -158,6 +209,7 @@ export class Sound {
         this.#source.playbackRate.value = options.pitch ?? this.pitch;
         this.#source.connect(this.#gainNode);
         this.#source.onended = () => this.#onEnded();
+        this.#cleanupState.source = this.#source;
 
         this.#pauseOffset = offset;
         this.#startTime = this.#context.currentTime;
@@ -194,6 +246,7 @@ export class Sound {
      * @returns {this}
      */
     play(options = {}) {
+        if (this.#disposed) return this;
         if (this.#playing) {
             this.#playing = false;
             clearTimeout(this.#loopTimeout);
@@ -221,7 +274,7 @@ export class Sound {
 
     /** Continue from a paused position. @returns {this} */
     resume() {
-        if (this.#playing) return this;
+        if (this.#disposed || this.#playing) return this;
         const offset = this.#pauseOffset;
         const start = () => this.#startPlayback(offset);
         if (this.#context.state === 'suspended') {
@@ -241,6 +294,22 @@ export class Sound {
         try { this.#source?.stop(); } catch {}
         if (hadActivity) this.#emit('stop');
         return this;
+    }
+
+    /**
+     * Stops playback, disconnects the audio graph this Sound built, and drops
+     * the decoded AudioBuffer reference so it's eligible for GC right away
+     * instead of waiting on this wrapper object to be dropped too. Idempotent.
+     * play()/resume() become no-ops after this.
+     */
+    dispose() {
+        if (this.#disposed) return;
+        this.stop();
+        this.#disposed = true;
+        this.#gainNode?.disconnect();
+        this.#buffer = null;
+        this.#listeners = { stop: [], end: [], loop: [] };
+        Sound.#registry.unregister(this.#disposeToken);
     }
 
     /**
@@ -315,19 +384,35 @@ export class AudioManager {
     }
 
     /**
+     * Disposes a named channel's audio graph and forgets it. Sounds still
+     * playing on it will keep running into a dead end until they finish —
+     * stop them first if that matters. The default (unnamed) channel can't
+     * be removed this way; use dispose() to tear down everything at once.
+     * @param {string} name
+     * @returns {boolean} true if a channel with that name existed
+     */
+    removeChannel(name) {
+        const ch = this.#channels.get(name);
+        if (!ch) return false;
+        ch.dispose();
+        this.#channels.delete(name);
+        return true;
+    }
+
+    /**
      * Fetch and decode an audio file. Returns a ready-to-play Sound.
      * @param {string} url
-     * @param {{ channel?: string, loop?: boolean, volume?: number, pan?: number, pitch?: number }} [options]
+     * @param {{ channel?: string, loop?: boolean, volume?: number, pan?: number, pitch?: number, onProgress?: (p: {loaded:number, total:number|null, url:string}) => void }} [options]
      * @returns {Promise<Sound>}
      *
      * @example
      * const jump = await audio.load('jump.mp3');
      * const bgm  = await audio.load('theme.mp3', { channel: 'music', loop: true });
+     * const big  = await audio.load('ambience.mp3', { onProgress: ({loaded, total}) => updateBar(loaded, total) });
      */
     async load(url, options = {}) {
         this.#ensureContext();
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
+        const arrayBuffer = await fetchWithProgress(url, options.onProgress);
         const audioBuffer = await this.#context.decodeAudioData(arrayBuffer);
         const ch = options.channel
             ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
@@ -369,14 +454,17 @@ export class AudioManager {
 
     /**
      * Load an instrument definition from a JSON file. Returns OscSynth or FmSynth
-     * depending on the `type` field in the JSON ("osc" or "fm").
+     * depending on the `type` field in the JSON ("osc" or "fm"), or a SamplerSynth
+     * for "sampler" — in which case onProgress reports the sample download, which
+     * is the part actually worth showing on a progress bar.
      * @param {string} url
-     * @param {{ channel?: string, voices?: number }} [options]
-     * @returns {Promise<OscSynth|FmSynth>}
+     * @param {{ channel?: string, voices?: number, onProgress?: (p: {loaded:number, total:number|null, url:string}) => void }} [options]
+     * @returns {Promise<OscSynth|FmSynth|SamplerSynth>}
      */
     async loadInstrument(url, options = {}) {
         this.#ensureContext();
         const response = await fetch(url);
+        if (!response.ok) throw new Error(`Instrument load failed (${response.status}): ${url}`);
         const def = await response.json();
         const ch = options.channel
             ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
@@ -386,7 +474,7 @@ export class AudioManager {
             return new FmSynth(this.#context, ch, def, { voices: options.voices });
         }
         if (def.type === 'sampler') {
-            return SamplerSynth.load(this.#context, ch, def, url, { voices: options.voices });
+            return SamplerSynth.load(this.#context, ch, def, url, { voices: options.voices, onProgress: options.onProgress });
         }
         await this.loadSynthWorklet();
         return new OscSynth(this.#context, ch, def, { voices: options.voices });
@@ -396,6 +484,7 @@ export class AudioManager {
         this.#ensureContext();
         await this.loadFmWorklet();
         const response = await fetch(url);
+        if (!response.ok) throw new Error(`Instrument load failed (${response.status}): ${url}`);
         const def = await response.json();
         const ch = options.channel
             ? (this.#channels.get(options.channel) ?? this.#defaultChannel)
@@ -408,12 +497,11 @@ export class AudioManager {
      * Call parser.getPresets() to list available presets, then buildSF2Instrument()
      * to decode the ones you want into live SamplerSynth instances.
      * @param {string} url
+     * @param {{ onProgress?: (p: {loaded:number, total:number|null, url:string}) => void }} [options]
      * @returns {Promise<SF2Parser>}
      */
-    async loadSF2(url) {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`SF2 load failed (${response.status}): ${url}`);
-        const buf = await response.arrayBuffer();
+    async loadSF2(url, options = {}) {
+        const buf = await fetchWithProgress(url, options.onProgress);
         return new SF2Parser(buf);
     }
 
@@ -461,6 +549,29 @@ export class AudioManager {
     /** Combined hardware output latency in seconds. Useful for AV sync. */
     get baseLatency() {
         return (this.#context?.baseLatency ?? 0) + (this.#context?.outputLatency ?? 0);
+    }
+
+    /**
+     * Full teardown: disposes every named channel and the default channel, then
+     * closes the AudioContext. Instruments and Sounds you're still holding should
+     * be disposed first — closing the context doesn't do that for you, it just
+     * stops everything from producing sound. Mainly useful for "quit app" /
+     * full audio-system restart, not routine level switches (use removeChannel()
+     * for those instead).
+     * @returns {Promise<void>}
+     */
+    async dispose() {
+        if (!this.#context) return;
+        for (const ch of this.#channels.values()) ch.dispose();
+        this.#channels.clear();
+        this.#defaultChannel?.dispose();
+        await this.#context.close();
+        this.#context = null;
+        this.#defaultChannel = null;
+        this.#masterCompressor = null;
+        this.#masterGain = null;
+        this.#workletLoaded = false;
+        this.#fmWorkletLoaded = false;
     }
 }
 

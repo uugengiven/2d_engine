@@ -1,6 +1,15 @@
 export class Texture {
     static #nextId = 0;
 
+    // Backstop only — disposes the raw GPU handles if a Texture is garbage
+    // collected without dispose() ever being called. FinalizationRegistry
+    // timing is unspecified by the spec, so this must never be relied on in
+    // place of calling dispose() when you actually need the VRAM back.
+    static #registry = new FinalizationRegistry(({ gpuTexture, normalTexture }) => {
+        gpuTexture.destroy();
+        normalTexture?.destroy();
+    });
+
     /** @type {number} Unique ID used for palette bind-group cache keying. */
     id;
     /** @type {GPUTexture} */
@@ -9,10 +18,15 @@ export class Texture {
     view;
     /** @type {GPUSampler} */
     sampler;
+    /** @type {GPUTexture | null} Normal map texture, or null if none was provided */
+    normalTexture;
     /** @type {GPUTextureView | null} Normal map view, or null if none was provided */
     normalView;
     /** @type {Array<{u0:number, v0:number, u1:number, v1:number}>} */
     uvTable;
+    /** @type {boolean} */
+    #disposed = false;
+    #disposeToken = {};
 
     /**
      * @param {GPUDevice} device
@@ -48,7 +62,7 @@ export class Texture {
         });
 
         if (normalBitmap) {
-            const normalTex = device.createTexture({
+            this.normalTexture = device.createTexture({
                 size: [normalBitmap.width, normalBitmap.height],
                 format: 'rgba8unorm',
                 usage:
@@ -58,15 +72,40 @@ export class Texture {
             });
             device.queue.copyExternalImageToTexture(
                 { source: normalBitmap },
-                { texture: normalTex },
+                { texture: this.normalTexture },
                 [normalBitmap.width, normalBitmap.height],
             );
-            this.normalView = normalTex.createView();
+            this.normalView = this.normalTexture.createView();
         } else {
+            this.normalTexture = null;
             this.normalView = null;
         }
 
         this.uvTable = this._buildUVTable(bitmap.width, bitmap.height, cols, rows);
+
+        // Held value intentionally excludes `this` — the registry must not be the
+        // thing keeping this Texture reachable, or it would never become collectible.
+        Texture.#registry.register(this, { gpuTexture: this.gpuTexture, normalTexture: this.normalTexture }, this.#disposeToken);
+    }
+
+    /** @type {boolean} True once dispose() has run. Using a disposed Texture is undefined behavior. */
+    get disposed() { return this.#disposed; }
+
+    /**
+     * Frees the GPU memory backing this texture (and its normal map, if any).
+     * Idempotent. Call this explicitly when you're done with a texture — don't
+     * rely on garbage collection, which only runs as a backstop and on no
+     * particular schedule.
+     *
+     * Any sprite still referencing this texture becomes invalid the moment you
+     * call this — same as freeing any other resource still in use elsewhere.
+     */
+    dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        this.gpuTexture.destroy();
+        this.normalTexture?.destroy();
+        Texture.#registry.unregister(this.#disposeToken);
     }
 
     /**
@@ -174,12 +213,12 @@ export class Texture {
 
     /**
      * Creates a 1×N palette texture from an array of colors. The returned object has
-     * the same shape as a Texture (id, view, gpuTexture) and can be assigned directly
-     * to sprite.paletteSrc / sprite.paletteDst.
+     * the same shape as a Texture (id, view, gpuTexture, dispose()) and can be assigned
+     * directly to sprite.paletteSrc / sprite.paletteDst.
      *
      * @param {GPUDevice} device
      * @param {Array<{r:number, g:number, b:number, a?:number}>} colors
-     * @returns {{ id: number, view: GPUTextureView, gpuTexture: GPUTexture }}
+     * @returns {{ id: number, view: GPUTextureView, gpuTexture: GPUTexture, disposed: boolean, dispose: () => void }}
      */
     static createPalette(device, colors) {
         const width = colors.length;
@@ -202,6 +241,21 @@ export class Texture {
             { bytesPerRow: width * 4 },
             [width, 1],
         );
-        return { id: ++Texture.#nextId, view: gpuTexture.createView(), gpuTexture };
+
+        const disposeToken = {};
+        const palette = {
+            id: ++Texture.#nextId,
+            view: gpuTexture.createView(),
+            gpuTexture,
+            disposed: false,
+            dispose() {
+                if (palette.disposed) return;
+                palette.disposed = true;
+                gpuTexture.destroy();
+                Texture.#registry.unregister(disposeToken);
+            },
+        };
+        Texture.#registry.register(palette, { gpuTexture, normalTexture: null }, disposeToken);
+        return palette;
     }
 }

@@ -318,6 +318,16 @@ def._decodedZones = zones;
 const flute = new SamplerSynth(audio.context, channel, def, zones, { voices: 8 });
 ```
 
+`decodeZones` (and `loadInstrument`/`SamplerSynth.load` for sampler-type instruments) take an `onProgress` callback, aggregated across all of the instrument's zone files — useful for driving a loading-screen progress bar:
+
+```js
+const zones = await SamplerSynth.decodeZones(audio.context, def, baseUrl, ({ loaded, total }) => {
+    updateBar(loaded, total); // total is null if any zone's server omitted Content-Length
+});
+```
+
+When you're done with a `SamplerSynth` (or `OscSynth`/`FmSynth`), call `.dispose()` — it's idempotent and disconnects the instrument's audio nodes. `decodeZones`'s `AudioBuffer`s aren't owned by anything beyond your own references to `def`/`zones`, so just drop those to free the decoded sample memory.
+
 ---
 
 ## SF2 Parser
